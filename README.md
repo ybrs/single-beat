@@ -110,4 +110,4 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
 Why
 --------
 
-There are some other solutions but either they are either complicated, or you need to modify the process
+There are some other solutions but either they are either complicated, or you need to modify the process. And I couldn't find a simpler solution for this https://github.com/celery/celery/issues/251 without modifying or adding locks to my tasks.
