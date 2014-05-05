@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 REDIS_SERVER  = os.environ.get('SINGLE_BEAT_REDIS_SERVER', 'redis://localhost:6379')
 IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER', None)
 LOCK_TIME = int(os.environ.get('SINGLE_BEAT_LOCK_TIME', 5))
-HEARTBEAT_INTERVAL = int(os.environ.get('SINGLE_BEAT_LOCK_TIME', 1))
+HEARTBEAT_INTERVAL = int(os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL', 1))
 HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER', socket.gethostname())
 
 rds = redis.Redis.from_url(REDIS_SERVER)
@@ -52,7 +52,7 @@ class Process(object):
             if not self.already_running(self.identifier):
                 self.spawn_process()
         elif self.state == "RUNNING":
-            rds.set("SINGLE_BEAT_%s" % self.identifier, "%s:%s" % (socket.gethostname(), self.proc.pid), ex=LOCK_TIME)
+            rds.set("SINGLE_BEAT_%s" % self.identifier, "%s:%s" % (HOST_IDENTIFIER, self.proc.pid), ex=LOCK_TIME)
 
     def already_running(self, identifier):
         return rds.get('SINGLE_BEAT_%s' % identifier)

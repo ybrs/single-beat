@@ -7,7 +7,7 @@ setup(
     packages=['singlebeat'],
     include_package_data=True,
     zip_safe=False,
-    install_requires=[],
+    install_requires=['pyuv', 'redis'],
     entry_points = {
         'console_scripts': [
             'single-beat = singlebeat.beat:run_process',
