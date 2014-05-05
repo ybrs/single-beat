@@ -105,9 +105,57 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
     redis 127.0.0.1:6379> get SINGLE_BEAT_celery-beat
     "192.168.1.1:43597"
     ```
+
 - SINGLE_BEAT_LOG_LEVEL (default warn)
 
     change log level to debug if you want to see the heartbeat messages.
+
+- SINGLE_BEAT_WAIT_MODE (default heartbeat)
+- SINGLE_BEAT_WAIT_BEFORE_DIE (default 60 seconds)
+
+    instead of checking the process every second (heartbeat mode) you can put single beat into supervisor, and die after 60 seconds (SINGLE_BEAT_WAIT_BEFORE_DIE), so supervisor will respawn it again, single-beat will check if there is another process in the cluster, will wait for 60 seconds and die nicely, so supervisor will respawn it....
+
+    easier to explain with code,
+
+    on first server
+
+    ```bash
+    SINGLE_BEAT_LOG_LEVEL=debug SINGLE_BEAT_WAIT_MODE=supervised SINGLE_BEAT_WAIT_BEFORE_DIE=10 SINGLE_BEAT_IDENTIFIER='celery-beat' single-beat celery beat -A example.tasks
+    DEBUG:singlebeat.beat:timer called 0.100841999054 state=WAITING
+    [2014-05-05 16:28:24,099: INFO/MainProcess] beat: Starting...
+    DEBUG:singlebeat.beat:timer called 0.999553918839 state=RUNNING
+    DEBUG:singlebeat.beat:timer called 1.00173187256 state=RUNNING
+    DEBUG:singlebeat.beat:timer called 1.00134801865 state=RUNNING
+    ```
+
+    this will heartbeat every second, on your second server
+
+    ```bash
+    SINGLE_BEAT_LOG_LEVEL=debug SINGLE_BEAT_WAIT_MODE=supervised SINGLE_BEAT_WAIT_BEFORE_DIE=10 SINGLE_BEAT_IDENTIFIER='celery-beat' single-beat celery beat -A example.tasks
+    DEBUG:singlebeat.beat:timer called 0.101243019104 state=WAITING
+    DEBUG:root:already running, will exit after 60 seconds
+    ```
+
+    so if you do this in your supervisor.conf
+
+    ```bash
+    [program:celerybeat]
+    environment=SINGLE_BEAT_IDENTIFIER="celery-beat",SINGLE_BEAT_REDIS_HOST="redis://localhost:6379/0",SINGLE_BEAT_WAIT_MODE="supervised", SINGLE_BEAT_WAIT_BEFORE_DIE=10
+    command=single-beat celery beat -A example.tasks
+    numprocs=1
+    stdout_logfile=./logs/celerybeat.log
+    stderr_logfile=./logs/celerybeat.err
+    autostart=true
+    autorestart=true
+    startsecs=10
+    ```
+
+    it will try to spawn celerybeat every 60 seconds.
+
+Usage Patterns
+--------------
+
+You can see an example usage with supervisor at example/celerybeat.conf
 
 Why
 --------

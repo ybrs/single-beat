@@ -14,10 +14,14 @@ HEARTBEAT_INTERVAL = int(os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL', 1))
 HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER', socket.gethostname())
 LOG_LEVEL = os.environ.get('SINGLE_BEAT_LOG_LEVEL', 'warn')
 
+# wait_mode can be, supervisored or heartbeat
+WAIT_MODE = os.environ.get('SINGLE_BEAT_WAIT_MODE', 'heartbeat')
+assert WAIT_MODE in ('supervised', 'heartbeat')
+WAIT_BEFORE_DIE = int(os.environ.get('SINGLE_BEAT_WAIT_BEFORE_DIE', 60))
+
 numeric_log_level = getattr(logging, LOG_LEVEL.upper(), None)
 logging.basicConfig(level=numeric_log_level)
 logger = logging.getLogger(__name__)
-
 
 rds = redis.Redis.from_url(REDIS_SERVER)
 rds.ping()
@@ -54,6 +58,11 @@ class Process(object):
         if self.state == 'WAITING':
             if not self.already_running(self.identifier):
                 self.spawn_process()
+            else:
+                if WAIT_MODE == 'supervised':
+                    logging.debug("already running, will exit after %s seconds" % WAIT_BEFORE_DIE)
+                    time.sleep(WAIT_BEFORE_DIE)
+                    sys.exit()
         elif self.state == "RUNNING":
             rds.set("SINGLE_BEAT_%s" % self.identifier, "%s:%s" % (HOST_IDENTIFIER, self.proc.pid), ex=LOCK_TIME)
 
