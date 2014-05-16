@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='single-beat',
-    version='0.1.2',
+    version='0.1.3',
     long_description=__doc__,
     packages=['singlebeat'],
     include_package_data=True,
