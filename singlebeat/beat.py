@@ -56,7 +56,7 @@ class Process(object):
         logger.debug("timer called %s state=%s", time.time() - self.t1, self.state)
         self.t1 = time.time()
         if self.state == 'WAITING':
-            if not self.already_running(self.identifier):
+            if self.acquire_lock(self.identifier):
                 self.spawn_process()
             else:
                 if WAIT_MODE == 'supervised':
@@ -66,8 +66,10 @@ class Process(object):
         elif self.state == "RUNNING":
             rds.set("SINGLE_BEAT_%s" % self.identifier, "%s:%s" % (HOST_IDENTIFIER, self.proc.pid), ex=LOCK_TIME)
 
-    def already_running(self, identifier):
-        return rds.get('SINGLE_BEAT_%s' % identifier)
+    def acquire_lock(self, identifier):
+        return rds.execute_command('SET', 'SINGLE_BEAT_%s' % self.identifier,
+                                   "%s:%s" % (HOST_IDENTIFIER, '0'), 'NX', 'PX',
+                                   LOCK_TIME)
 
     def sigterm_handler(self, signum, frame):
         logging.debug("our state %s", self.state)
