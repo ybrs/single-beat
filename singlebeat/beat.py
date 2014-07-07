@@ -7,11 +7,13 @@ import redis
 import logging
 import signal
 
-REDIS_SERVER  = os.environ.get('SINGLE_BEAT_REDIS_SERVER', 'redis://localhost:6379')
+REDIS_SERVER = os.environ.get('SINGLE_BEAT_REDIS_SERVER',
+                              'redis://localhost:6379')
 IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER', None)
 LOCK_TIME = int(os.environ.get('SINGLE_BEAT_LOCK_TIME', 5))
 HEARTBEAT_INTERVAL = int(os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL', 1))
-HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER', socket.gethostname())
+HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER',
+                                 socket.gethostname())
 LOG_LEVEL = os.environ.get('SINGLE_BEAT_LOG_LEVEL', 'warn')
 
 # wait_mode can be, supervisored or heartbeat
@@ -25,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 rds = redis.Redis.from_url(REDIS_SERVER)
 rds.ping()
+
 
 class Process(object):
     def __init__(self, args):
@@ -53,30 +56,34 @@ class Process(object):
             sys.stdout.write(data)
 
     def timer_cb(self, timer):
-        logger.debug("timer called %s state=%s", time.time() - self.t1, self.state)
+        logger.debug("timer called %s state=%s",
+                     time.time() - self.t1, self.state)
         self.t1 = time.time()
         if self.state == 'WAITING':
             if self.acquire_lock(self.identifier):
                 self.spawn_process()
             else:
                 if WAIT_MODE == 'supervised':
-                    logging.debug("already running, will exit after %s seconds" % WAIT_BEFORE_DIE)
+                    logging.debug("already running, will exit after %s seconds"
+                                  % WAIT_BEFORE_DIE)
                     time.sleep(WAIT_BEFORE_DIE)
                     sys.exit()
         elif self.state == "RUNNING":
-            rds.set("SINGLE_BEAT_%s" % self.identifier, "%s:%s" % (HOST_IDENTIFIER, self.proc.pid), ex=LOCK_TIME)
+            rds.set("SINGLE_BEAT_%s" % self.identifier,
+                    "%s:%s" % (HOST_IDENTIFIER, self.proc.pid), ex=LOCK_TIME)
 
     def acquire_lock(self, identifier):
         return rds.execute_command('SET', 'SINGLE_BEAT_%s' % self.identifier,
-                                   "%s:%s" % (HOST_IDENTIFIER, '0'), 'NX', 'PX',
-                                   LOCK_TIME)
+                                   "%s:%s" % (HOST_IDENTIFIER, '0'),
+                                   'NX', 'PX', LOCK_TIME)
 
     def sigterm_handler(self, signum, frame):
         logging.debug("our state %s", self.state)
         if self.state == 'WAITING':
             sys.exit(signum)
         elif self.state == 'RUNNING':
-            logger.debug('already running sending signal to child - %s', self.proc.pid)
+            logger.debug('already running sending signal to child - %s',
+                         self.proc.pid)
             os.kill(self.proc.pid, signum)
 
     def run(self):
@@ -93,20 +100,26 @@ class Process(object):
 
         stdio = []
         stdio.append(pyuv.StdIO(flags=pyuv.UV_IGNORE))
-        stdio.append(pyuv.StdIO(stream=stdout_pipe, flags=pyuv.UV_CREATE_PIPE|pyuv.UV_WRITABLE_PIPE))
-        stdio.append(pyuv.StdIO(stream=stderr_pipe, flags=pyuv.UV_CREATE_PIPE|pyuv.UV_WRITABLE_PIPE))
+        stdio.append(pyuv.StdIO(
+            stream=stdout_pipe,
+            flags=pyuv.UV_CREATE_PIPE | pyuv.UV_WRITABLE_PIPE))
+        stdio.append(pyuv.StdIO(
+            stream=stderr_pipe,
+            flags=pyuv.UV_CREATE_PIPE | pyuv.UV_WRITABLE_PIPE))
 
-        rds.set("SINGLE_BEAT_%s" % self.identifier, "%s:%s" % (HOST_IDENTIFIER, self.proc.pid), ex=LOCK_TIME)
+        rds.set("SINGLE_BEAT_%s" % self.identifier, "%s:%s"
+                % (HOST_IDENTIFIER, self.proc.pid), ex=LOCK_TIME)
         self.state = "RUNNING"
 
         self.proc.spawn(file=args[0],
-                   args=args[1:],
-                   cwd=os.getcwd(),
-                   exit_callback=self.proc_exit_cb,
-                   stdio=stdio)
+                        args=args[1:],
+                        cwd=os.getcwd(),
+                        exit_callback=self.proc_exit_cb,
+                        stdio=stdio)
 
         stdout_pipe.start_read(self.stdout_read_cb)
         stderr_pipe.start_read(self.stderr_read_cb)
+
 
 def run_process():
     process = Process(sys.argv[1:])
