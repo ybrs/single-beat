@@ -11,6 +11,7 @@ REDIS_SERVER = os.environ.get('SINGLE_BEAT_REDIS_SERVER',
                               'redis://localhost:6379')
 IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER', None)
 LOCK_TIME = int(os.environ.get('SINGLE_BEAT_LOCK_TIME', 5))
+INITIAL_LOCK_TIME = int(os.environ.get('SINGLE_BEAT_INITIAL_LOCK_TIME', LOCK_TIME * 2))
 HEARTBEAT_INTERVAL = int(os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL', 1))
 HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER',
                                  socket.gethostname())
@@ -75,7 +76,7 @@ class Process(object):
     def acquire_lock(self, identifier):
         return rds.execute_command('SET', 'SINGLE_BEAT_%s' % self.identifier,
                                    "%s:%s" % (HOST_IDENTIFIER, '0'),
-                                   'NX', 'PX', LOCK_TIME)
+                                   'NX', 'EX', INITIAL_LOCK_TIME)
 
     def sigterm_handler(self, signum, frame):
         logging.debug("our state %s", self.state)
@@ -107,8 +108,6 @@ class Process(object):
             stream=stderr_pipe,
             flags=pyuv.UV_CREATE_PIPE | pyuv.UV_WRITABLE_PIPE))
 
-        rds.set("SINGLE_BEAT_%s" % self.identifier, "%s:%s"
-                % (HOST_IDENTIFIER, self.proc.pid), ex=LOCK_TIME)
         self.state = "RUNNING"
 
         self.proc.spawn(file=args[0],
