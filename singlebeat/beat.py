@@ -11,7 +11,8 @@ REDIS_SERVER = os.environ.get('SINGLE_BEAT_REDIS_SERVER',
                               'redis://localhost:6379')
 IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER', None)
 LOCK_TIME = int(os.environ.get('SINGLE_BEAT_LOCK_TIME', 5))
-INITIAL_LOCK_TIME = int(os.environ.get('SINGLE_BEAT_INITIAL_LOCK_TIME', LOCK_TIME * 2))
+INITIAL_LOCK_TIME = int(os.environ.get('SINGLE_BEAT_INITIAL_LOCK_TIME',
+                                       LOCK_TIME * 2))
 HEARTBEAT_INTERVAL = int(os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL', 1))
 HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER',
                                  socket.gethostname())
