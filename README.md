@@ -64,9 +64,10 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
     ```
 
 - SINGLE_BEAT_LOCK_TIME (default 5 seconds)
+- SINGLE_BEAT_INITIAL_LOCK_TIME (default 2 * SINGLE_BEAT_LOCK_TIME seconds)
 - SINGLE_BEAT_HEARTBEAT_INTERVAL (default 1 second)
 
-    when starting your process, we set a key with 5 second expiration (LOCK_TIME) in redis server, and other single-beat processes checks if that key exists. We continue to update that key every 1 second (HEARTBEAT_INTERVAL)
+    when starting your process, we set a key with 10 second expiration (INITIAL_LOCK_TIME) in redis server, other single-beat processes checks if that key exists - if it exists they won't spawn children. We continue to update that key every 1 second (HEARTBEAT_INTERVAL) setting it with a ttl of 5 seconds (LOCK_TIME)
 
     this should work, but you might want to give more relaxed intervals, like:
 
@@ -163,3 +164,9 @@ Why
 There are some other solutions but either they are either complicated, or you need to modify the process. And I couldn't find a simpler solution for this https://github.com/celery/celery/issues/251 without modifying or adding locks to my tasks.
 
 You can also check uWsgi's [Legion Support](http://uwsgi-docs.readthedocs.org/en/latest/AttachingDaemons.html#legion-support) which can do the same thing.
+
+Credits
+----------
+ * [ybrs](https://github.com/ybrs)
+ * [edmund-wagner](https://github.com/edmund-wagner)
+ * [lowks](https://github.com/lowks)
