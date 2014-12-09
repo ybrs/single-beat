@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='single-beat',
-    version='0.1.4',
+    version='0.1.5',
     long_description=__doc__,
     description='ensures only one instance of your process across your servers',
     url='https://github.com/ybrs/single-beat',
