@@ -10,7 +10,7 @@ setup(
     include_package_data=True,
     zip_safe=False,
     install_requires=[
-        'pyuv >= 0.10.11',
+        'pyuv >= 0.10, < 1.0.0',
         'redis >= 2.9.1'
     ],
     entry_points={
