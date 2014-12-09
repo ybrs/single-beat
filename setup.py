@@ -9,8 +9,10 @@ setup(
     packages=['singlebeat'],
     include_package_data=True,
     zip_safe=False,
-    install_requires=['pyuv==0.10.11',
-        'redis==2.9.1'],
+    install_requires=[
+        'pyuv >= 0.10.11',
+        'redis >= 2.9.1'
+    ],
     entry_points={
         'console_scripts': [
             'single-beat = singlebeat.beat:run_process',
