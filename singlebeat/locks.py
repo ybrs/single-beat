@@ -75,7 +75,15 @@ class PostgresLock(Lock):
         self.heartbeat_interval = int(HEARTBEAT_INTERVAL or 10)
         self.server_uri = server_uri
         import psycopg2
-        conn = psycopg2.connect(self.server_uri)
+        import urlparse # import urllib.parse for python 3+
+        result = urlparse.urlparse(server_uri)
+        conn = psycopg2.connect(
+            database = result.path[1:],
+            user = result.username,
+            password = result.password,
+            host = result.hostname
+        )
+        #conn = psycopg2.connect(self.server_uri)
         cur = conn.cursor()
         cur.execute( ("CREATE TABLE IF NOT EXISTS single_beat_lock (key varchar PRIMARY KEY, "
                                                                "  value varchar, "
