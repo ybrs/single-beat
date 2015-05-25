@@ -2,20 +2,11 @@ import os
 import sys
 import pyuv
 import time
-import socket
-import redis
 import logging
 import signal
 
-REDIS_SERVER = os.environ.get('SINGLE_BEAT_REDIS_SERVER',
-                              'redis://localhost:6379')
-IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER', None)
-LOCK_TIME = int(os.environ.get('SINGLE_BEAT_LOCK_TIME', 5))
-INITIAL_LOCK_TIME = int(os.environ.get('SINGLE_BEAT_INITIAL_LOCK_TIME',
-                                       LOCK_TIME * 2))
-HEARTBEAT_INTERVAL = int(os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL', 1))
-HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER',
-                                 socket.gethostname())
+ARGS = sys.argv[1:]
+IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER')  or ARGS[0]
 LOG_LEVEL = os.environ.get('SINGLE_BEAT_LOG_LEVEL', 'warn')
 
 # wait_mode can be, supervisored or heartbeat
@@ -27,8 +18,7 @@ numeric_log_level = getattr(logging, LOG_LEVEL.upper(), None)
 logging.basicConfig(level=numeric_log_level)
 logger = logging.getLogger(__name__)
 
-rds = redis.Redis.from_url(REDIS_SERVER)
-rds.ping()
+from locks import LOCK, PostgresLock
 
 
 class Process(object):
@@ -37,7 +27,7 @@ class Process(object):
         self.state = None
         self.t1 = time.time()
 
-        self.identifier = IDENTIFIER or self.args[0]
+        self.identifier = IDENTIFIER
 
         signal.signal(signal.SIGTERM, self.sigterm_handler)
         signal.signal(signal.SIGINT, self.sigterm_handler)
@@ -62,22 +52,15 @@ class Process(object):
                      time.time() - self.t1, self.state)
         self.t1 = time.time()
         if self.state == 'WAITING':
-            if self.acquire_lock(self.identifier):
+            if LOCK.acquire_lock(self.identifier):
                 self.spawn_process()
             else:
                 if WAIT_MODE == 'supervised':
-                    logging.debug("already running, will exit after %s seconds"
-                                  % WAIT_BEFORE_DIE)
+                    logging.debug("already running, will exit after %s seconds" % WAIT_BEFORE_DIE)
                     time.sleep(WAIT_BEFORE_DIE)
                     sys.exit()
         elif self.state == "RUNNING":
-            rds.set("SINGLE_BEAT_%s" % self.identifier,
-                    "%s:%s" % (HOST_IDENTIFIER, self.proc.pid), ex=LOCK_TIME)
-
-    def acquire_lock(self, identifier):
-        return rds.execute_command('SET', 'SINGLE_BEAT_%s' % self.identifier,
-                                   "%s:%s" % (HOST_IDENTIFIER, '0'),
-                                   'NX', 'EX', INITIAL_LOCK_TIME)
+            LOCK.refresh_lock(self.identifier, self.proc.pid)
 
     def sigterm_handler(self, signum, frame):
         logging.debug("our state %s", self.state)
@@ -90,7 +73,7 @@ class Process(object):
 
     def run(self):
         # runs every 1 second
-        self.timer.start(self.timer_cb, 0.1, HEARTBEAT_INTERVAL)
+        self.timer.start(self.timer_cb, 0.1, LOCK.heartbeat_interval)
         self.loop.run()
 
     def spawn_process(self):
@@ -122,7 +105,7 @@ class Process(object):
 
 
 def run_process():
-    process = Process(sys.argv[1:])
+    process = Process(ARGS)
     process.run()
 
 if __name__ == "__main__":
