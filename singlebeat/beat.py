@@ -19,7 +19,7 @@ logging.basicConfig(level=numeric_log_level)
 logger = logging.getLogger(__name__)
 
 from locks import LOCK, PostgresLock
-
+LOCK.identifier = IDENTIFIER
 
 class Process(object):
     def __init__(self, args):
@@ -52,7 +52,7 @@ class Process(object):
                      time.time() - self.t1, self.state)
         self.t1 = time.time()
         if self.state == 'WAITING':
-            if LOCK.acquire_lock(self.identifier):
+            if LOCK.acquire_lock():
                 self.spawn_process()
             else:
                 if WAIT_MODE == 'supervised':
@@ -60,7 +60,7 @@ class Process(object):
                     time.sleep(WAIT_BEFORE_DIE)
                     sys.exit()
         elif self.state == "RUNNING":
-            LOCK.refresh_lock(self.identifier, self.proc.pid)
+            LOCK.refresh_lock(self.proc.pid)
 
     def sigterm_handler(self, signum, frame):
         logging.debug("our state %s", self.state)

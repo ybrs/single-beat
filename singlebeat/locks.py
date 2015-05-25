@@ -35,7 +35,6 @@ class RedisLock(Lock):
         self.lock_time = int( LOCK_TIME or 1 )
         self.initial_lock_time = int(INITIAL_LOCK_TIME or (self.lock_time * 2))
         self.heartbeat_interval = int(HEARTBEAT_INTERVAL or 1)
-
         self.server_uri = server_uri
         import redis
         self.rds = redis.Redis.from_url(REDIS_SERVER)
@@ -85,7 +84,7 @@ class PostgresLock(Lock):
         cur.close()
         self.conn = conn
 
-    def acquire_lock(self, identifier):
+    def acquire_lock(self):
         print "Trying to acquire lock..."
         value = "%s:%s" % (HOST_IDENTIFIER, '0')
         data ={'key': self.lock_key, 'value': value}
@@ -114,7 +113,8 @@ class PostgresLock(Lock):
         return success
 
 
-    def refresh_lock(self, identifier, pid):
+    def refresh_lock(self, pid=None):
+        pid = pid or 0
         value = "%s:%s" % (HOST_IDENTIFIER, pid)
         print "REFRESHING"
         query = ("UPDATE single_beat_lock SET value = %(value)s , last_check_in = current_timestamp "
