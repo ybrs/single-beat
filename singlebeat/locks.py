@@ -1,10 +1,13 @@
 import socket
 import os
 import logging
+import sys
 logger = logging.getLogger(__name__)
 
 LOCK = None
 
+ARGS = sys.argv[1:]
+IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER') or ARGS[0]
 HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER',
                                  socket.gethostname())
 
@@ -12,6 +15,7 @@ LOCK_TIME = os.environ.get('SINGLE_BEAT_LOCK_TIME')
 INITIAL_LOCK_TIME = os.environ.get('SINGLE_BEAT_INITIAL_LOCK_TIME')
 HEARTBEAT_INTERVAL = os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL')
 
+RABBITMQ_SERVER = os.environ.get('SINGLE_BEAT_RABBITMQ_SERVER')
 REDIS_SERVER = os.environ.get('SINGLE_BEAT_REDIS_SERVER')
 POSTGRES_SERVER = os.environ.get('SINGLE_BEAT_POSTGRES_SERVER')
 MONGO_SERVER = os.environ.get('SINGLE_BEAT_MONGO_SERVER')
@@ -22,7 +26,7 @@ class Lock(object):
 
     @property
     def lock_key(self):
-        return 'SINGLE_BEAT_%s' % self.identifier
+        return 'SINGLE_BEAT_%s' % self.identifier or IDENTIFIER
 
     def acquire_lock(self, identifier):
         raise NotImplementedError
@@ -67,6 +71,51 @@ class MemcacheLock(Lock):
         mc.set(self.lock_key, value, time=LOCK_TIME)
         return True
 
+
+
+class RabbitMQLock(Lock):
+
+    def __init__(self, server_uri):
+        self.identifier = IDENTIFIER
+        self.lock_time = int( LOCK_TIME or 12 )
+        self.initial_lock_time = int(INITIAL_LOCK_TIME or (self.lock_time * 2))
+        self.heartbeat_interval = int(HEARTBEAT_INTERVAL or 4)
+        self.server_uri = server_uri
+        self.args = {'x-message-ttl': self.lock_time * 100}
+        import pika
+        parameters = pika.URLParameters(self.server_uri)
+        self.exchange = 'single-beat'
+        self.connection = pika.BlockingConnection(parameters)
+        self.channel = self.connection.channel()
+        self.channel.exchange_declare(exchange=self.exchange, type='fanout')
+        self.q = self.channel.queue_declare(exclusive=True, arguments=self.args)
+        self.queue_name = self.q.method.queue
+        result = self.channel.queue_bind(exchange=self.exchange,
+                                         queue=self.queue_name,
+                                         routing_key=self.lock_key)
+
+    def acquire_lock(self):
+        from time import sleep
+        sleep(self.heartbeat_interval)
+        method_frame, header_frame, body = self.channel.basic_get(self.queue_name)
+        if not body:
+            print "Getting the LOCK!"
+            value = "%s:%s" % (HOST_IDENTIFIER, '0')
+            self.channel.basic_publish(exchange=self.exchange,
+                                       routing_key=self.lock_key,
+                                       body=value)
+            return True
+        print "Someone else has lock."
+        self.channel.queue_purge(self.queue_name)
+        return False
+
+    def refresh_lock(self, pid):
+        print "Refreshing LOCK!"
+        value = "%s:%s" % (HOST_IDENTIFIER, pid)
+        self.channel.basic_publish(exchange=self.exchange,
+                                   routing_key=self.lock_key,
+                                   body=value)
+        return True
 
 
 class PostgresLock(Lock):
@@ -134,21 +183,6 @@ class PostgresLock(Lock):
         return True
 
 
-class RabbitMQLock(Lock):
-    def __iniit__(self, server_uri):
-        self.server_uri = server_uri
-        import pika
-        connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
-        channel = connection.channel()
-        channel.exchange_declare(exchange='single-beat', type='fanout')
-
-    def acquire_lock(self, identifier):
-        return False
-
-    def refresh_lock(self, identifier, pid):
-        return False
-
-
 class MongoLock(Lock):
     def __init__(self, server_uri):
         self.server_uri = server_uri
@@ -165,6 +199,8 @@ if REDIS_SERVER:
     LOCK = RedisLock(REDIS_SERVER)
 elif MEMCACHED_SERVERS:
     LOCK = MemcacheLock(REDIS_SERVER)
+elif RABBITMQ_SERVER:
+    LOCK = RabbitMQLock(RABBITMQ_SERVER)
 elif POSTGRES_SERVER:
     LOCK = PostgresLock(POSTGRES_SERVER)
 elif MONGO_SERVER:
