@@ -99,18 +99,18 @@ class RabbitMQLock(Lock):
         sleep(self.heartbeat_interval)
         method_frame, header_frame, body = self.channel.basic_get(self.queue_name)
         if not body:
-            print "Getting the LOCK!"
+            #print "Getting the LOCK!"
             value = "%s:%s" % (HOST_IDENTIFIER, '0')
             self.channel.basic_publish(exchange=self.exchange,
                                        routing_key=self.lock_key,
                                        body=value)
             return True
-        print "Someone else has lock."
+        #print "Someone else has lock."
         self.channel.queue_purge(self.queue_name)
         return False
 
     def refresh_lock(self, pid):
-        print "Refreshing LOCK!"
+        #print "Refreshing LOCK!"
         value = "%s:%s" % (HOST_IDENTIFIER, pid)
         self.channel.basic_publish(exchange=self.exchange,
                                    routing_key=self.lock_key,
@@ -142,7 +142,7 @@ class PostgresLock(Lock):
         self.conn = conn
 
     def acquire_lock(self):
-        print "Trying to acquire lock..."
+        #print "Trying to acquire lock..."
         value = "%s:%s" % (HOST_IDENTIFIER, '0')
         data ={'key': self.lock_key, 'value': value}
         query =  (" DELETE FROM single_beat_lock "
@@ -154,7 +154,7 @@ class PostgresLock(Lock):
         lock_held = cur.fetchone()
         success = None
         if lock_held:
-            print "Lock already held"
+            #print "Lock already held"
             success = False
         else:
             query = ("INSERT INTO single_beat_lock (key, value, last_check_in) "
@@ -173,7 +173,7 @@ class PostgresLock(Lock):
     def refresh_lock(self, pid=None):
         pid = pid or 0
         value = "%s:%s" % (HOST_IDENTIFIER, pid)
-        print "REFRESHING"
+        #print "REFRESHING"
         query = ("UPDATE single_beat_lock SET value = %(value)s , last_check_in = current_timestamp "
                        " WHERE key= %(key)s")
         cur = self.conn.cursor()
