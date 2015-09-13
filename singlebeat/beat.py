@@ -51,11 +51,11 @@ class Process(object):
 
     def stdout_read_cb(self, handle, data, error):
         if data:
-            sys.stdout.write(data)
+            sys.stdout.write(data.decode('utf-8'))
 
     def stderr_read_cb(self, handle, data, error):
         if data:
-            sys.stdout.write(data)
+            sys.stdout.write(data.decode('utf-8'))
 
     def timer_cb(self, timer):
         logger.debug("timer called %s state=%s",
