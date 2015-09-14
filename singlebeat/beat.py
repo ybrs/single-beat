@@ -51,7 +51,7 @@ class Process(object):
         self.state = 'WAITING'
         self.ioloop = tornado.ioloop.IOLoop.instance()
 
-    def proc_exit_cb(self, proc, exit_status, term_signal):
+    def proc_exit_cb(self, exit_status):
         sys.exit(exit_status)
 
     def stdout_read_cb(self, data):
@@ -110,6 +110,7 @@ class Process(object):
                     stdout=STREAM,
                     stderr=STREAM
                    )
+        self.sprocess.set_exit_callback(self.proc_exit_cb)
 
         self.sprocess.stdout.read_until_close(streaming_callback=self.stdout_read_cb)
         self.sprocess.stderr.read_until_close(streaming_callback=self.stderr_read_cb)
