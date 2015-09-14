@@ -13,7 +13,11 @@ IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER', None)
 LOCK_TIME = int(os.environ.get('SINGLE_BEAT_LOCK_TIME', 5))
 INITIAL_LOCK_TIME = int(os.environ.get('SINGLE_BEAT_INITIAL_LOCK_TIME',
                                        LOCK_TIME * 2))
+assert LOCK_TIME < INITIAL_LOCK_TIME, "inital lock time must be greater than lock time "
+
 HEARTBEAT_INTERVAL = int(os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL', 1))
+assert HEARTBEAT_INTERVAL < (LOCK_TIME / 2.0), "SINGLE_BEAT_HEARTBEAT_INTERVAL must be smaller than SINGLE_BEAT_LOCK_TIME / 2"
+
 HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER',
                                  socket.gethostname())
 LOG_LEVEL = os.environ.get('SINGLE_BEAT_LOG_LEVEL', 'warn')
@@ -29,7 +33,6 @@ logger = logging.getLogger(__name__)
 
 rds = redis.Redis.from_url(REDIS_SERVER)
 rds.ping()
-
 
 class Process(object):
     def __init__(self, args):
