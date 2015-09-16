@@ -55,10 +55,10 @@ class Process(object):
         sys.exit(exit_status)
 
     def stdout_read_cb(self, data):
-        sys.stdout.write(data.decode('utf-8'))
+        sys.stdout.write(data)
 
     def stderr_read_cb(self, data):
-        sys.stdout.write(data.decode('utf-8'))
+        sys.stdout.write(data)
 
     def timer_cb(self):
         logger.debug("timer called %s state=%s",
