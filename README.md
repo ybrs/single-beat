@@ -141,7 +141,7 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
 
     ```bash
     [program:celerybeat]
-    environment=SINGLE_BEAT_IDENTIFIER="celery-beat",SINGLE_BEAT_REDIS_HOST="redis://localhost:6379/0",SINGLE_BEAT_WAIT_MODE="supervised", SINGLE_BEAT_WAIT_BEFORE_DIE=10
+    environment=SINGLE_BEAT_IDENTIFIER="celery-beat",SINGLE_BEAT_REDIS_SERVER="redis://localhost:6379/0",SINGLE_BEAT_WAIT_MODE="supervised", SINGLE_BEAT_WAIT_BEFORE_DIE=10
     command=single-beat celery beat -A example.tasks
     numprocs=1
     stdout_logfile=./logs/celerybeat.log
