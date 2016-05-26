@@ -30,13 +30,14 @@ class Lock(object):
 
     def acquire_lock(self, identifier):
         raise NotImplementedError
+
     def refresh_lock(self, identifier, pid):
         raise NotImplementedError
 
 
 class RedisLock(Lock):
     def __init__(self, server_uri, *args):
-        self.lock_time = int( LOCK_TIME or 1 )
+        self.lock_time = int(LOCK_TIME or 1)
         self.initial_lock_time = int(INITIAL_LOCK_TIME or (self.lock_time * 2))
         self.heartbeat_interval = int(HEARTBEAT_INTERVAL or 1)
         self.server_uri = server_uri
@@ -55,7 +56,7 @@ class RedisLock(Lock):
 
 class MemcacheLock(Lock):
     def __init__(self, server_uri, *args):
-        self.lock_time = int( LOCK_TIME or 1 )
+        self.lock_time = int(LOCK_TIME or 1)
         self.initial_lock_time = int(INITIAL_LOCK_TIME or (self.lock_time * 2))
         self.heartbeat_interval = int(HEARTBEAT_INTERVAL or 1)
         self.server_uri = server_uri.split(',')
@@ -72,12 +73,11 @@ class MemcacheLock(Lock):
         return True
 
 
-
 class RabbitMQLock(Lock):
 
     def __init__(self, server_uri):
         self.identifier = IDENTIFIER
-        self.lock_time = int( LOCK_TIME or 12 )
+        self.lock_time = int(LOCK_TIME or 12)
         self.initial_lock_time = int(INITIAL_LOCK_TIME or (self.lock_time * 2))
         self.heartbeat_interval = int(HEARTBEAT_INTERVAL or 4)
         self.server_uri = server_uri
@@ -99,18 +99,15 @@ class RabbitMQLock(Lock):
         sleep(self.heartbeat_interval)
         method_frame, header_frame, body = self.channel.basic_get(self.queue_name)
         if not body:
-            #print "Getting the LOCK!"
             value = "%s:%s" % (HOST_IDENTIFIER, '0')
             self.channel.basic_publish(exchange=self.exchange,
                                        routing_key=self.lock_key,
                                        body=value)
             return True
-        #print "Someone else has lock."
         self.channel.queue_purge(self.queue_name)
         return False
 
     def refresh_lock(self, pid):
-        #print "Refreshing LOCK!"
         value = "%s:%s" % (HOST_IDENTIFIER, pid)
         self.channel.basic_publish(exchange=self.exchange,
                                    routing_key=self.lock_key,
@@ -120,45 +117,43 @@ class RabbitMQLock(Lock):
 
 class PostgresLock(Lock):
     def __init__(self, server_uri):
-        self.lock_time = int( LOCK_TIME or 20 )
+        self.lock_time = int(LOCK_TIME or 20)
         self.heartbeat_interval = int(HEARTBEAT_INTERVAL or 10)
         self.server_uri = server_uri
         import psycopg2
-        import urlparse # import urllib.parse for python 3+
+        import urlparse  # import urllib.parse for python 3+
         result = urlparse.urlparse(server_uri)
         conn = psycopg2.connect(
-            database = result.path[1:],
-            user = result.username,
-            password = result.password,
-            host = result.hostname
+            database=result.path[1:],
+            user=result.username,
+            password=result.password,
+            host=result.hostname
         )
-        #conn = psycopg2.connect(self.server_uri)
+        # conn = psycopg2.connect(self.server_uri)
         cur = conn.cursor()
-        cur.execute( ("CREATE TABLE IF NOT EXISTS single_beat_lock (key varchar PRIMARY KEY, "
-                                                               "  value varchar, "
-                                                               "  last_check_in timestamp);") )
+        cur.execute(("CREATE TABLE IF NOT EXISTS single_beat_lock (key varchar PRIMARY KEY, "
+                     "  value varchar, "
+                     "  last_check_in timestamp);"))
         conn.commit()
         cur.close()
         self.conn = conn
 
     def acquire_lock(self):
-        #print "Trying to acquire lock..."
         value = "%s:%s" % (HOST_IDENTIFIER, '0')
-        data ={'key': self.lock_key, 'value': value}
-        query =  (" DELETE FROM single_beat_lock "
-                        " WHERE (current_timestamp - last_check_in) > INTERVAL '{lock_time} seconds' ; "
-                        " SELECT key, value,  (current_timestamp - last_check_in) as diff "
-                        " FROM single_beat_lock WHERE key = %(key)s").format(lock_time=self.lock_time)
+        data = {'key': self.lock_key, 'value': value}
+        query = (" DELETE FROM single_beat_lock "
+                 " WHERE (current_timestamp - last_check_in) > INTERVAL '{lock_time} seconds' ; "
+                 " SELECT key, value,  (current_timestamp - last_check_in) as diff "
+                 " FROM single_beat_lock WHERE key = %(key)s").format(lock_time=self.lock_time)
         cur = self.conn.cursor()
         cur.execute(query, data)
         lock_held = cur.fetchone()
         success = None
         if lock_held:
-            #print "Lock already held"
             success = False
         else:
             query = ("INSERT INTO single_beat_lock (key, value, last_check_in) "
-                              " VALUES (%(key)s, %(value)s, current_timestamp)")
+                     " VALUES (%(key)s, %(value)s, current_timestamp)")
             try:
                 cur.execute(query, data)
                 success = True
@@ -169,13 +164,11 @@ class PostgresLock(Lock):
         cur.close()
         return success
 
-
     def refresh_lock(self, pid=None):
         pid = pid or 0
         value = "%s:%s" % (HOST_IDENTIFIER, pid)
-        #print "REFRESHING"
         query = ("UPDATE single_beat_lock SET value = %(value)s , last_check_in = current_timestamp "
-                       " WHERE key= %(key)s")
+                 " WHERE key= %(key)s")
         cur = self.conn.cursor()
         cur.execute(query, {'key': self.lock_key, 'value': value})
         self.conn.commit()
@@ -194,7 +187,6 @@ class MongoLock(Lock):
         return False
 
 
-
 if REDIS_SERVER:
     LOCK = RedisLock(REDIS_SERVER)
 elif MEMCACHED_SERVERS:
@@ -207,9 +199,5 @@ elif MONGO_SERVER:
     LOCK = MongoLock(MONGO_SERVER)
 else:
     LOCK = RedisLock('redis://localhost:6379')
-    #TODO: try catch redis lock....then try catch memcache lock as defaults
-    #LOCK = MemcacheLock('127.0.0.1:11211')
-
-
-
-
+    # TODO: try catch redis lock....then try catch memcache lock as defaults
+    # LOCK = MemcacheLock('127.0.0.1:11211')

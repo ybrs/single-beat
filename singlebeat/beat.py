@@ -3,12 +3,13 @@ import sys
 import pyuv
 import time
 import socket
-import redis
 import logging
 import signal
 
+from locks import LOCK
+
 ARGS = sys.argv[1:]
-IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER')  or ARGS[0]
+IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER') or ARGS[0]
 REDIS_SERVER = os.environ.get('SINGLE_BEAT_REDIS_SERVER',
                               'redis://localhost:6379')
 LOCK_TIME = int(os.environ.get('SINGLE_BEAT_LOCK_TIME', 5))
@@ -28,8 +29,8 @@ numeric_log_level = getattr(logging, LOG_LEVEL.upper(), None)
 logging.basicConfig(level=numeric_log_level)
 logger = logging.getLogger(__name__)
 
-from locks import LOCK, PostgresLock
 LOCK.identifier = IDENTIFIER
+
 
 class Process(object):
     def __init__(self, args):
