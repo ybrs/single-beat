@@ -28,7 +28,7 @@ class Lock(object):
     def lock_key(self):
         return 'SINGLE_BEAT_%s' % self.identifier or IDENTIFIER
 
-    def acquire_lock(self, identifier):
+    def acquire_lock(self):
         raise NotImplementedError
 
     def refresh_lock(self, identifier, pid):
@@ -45,7 +45,7 @@ class RedisLock(Lock):
         self.rds = redis.Redis.from_url(REDIS_SERVER)
         self.rds.ping()
 
-    def acquire_lock(self, identifier):
+    def acquire_lock(self):
         value = "%s:%s" % (HOST_IDENTIFIER, '0')
         return self.rds.execute_command('SET', self.lock_key, value, 'NX', 'EX', self.initial_lock_time)
 
@@ -60,16 +60,16 @@ class MemcacheLock(Lock):
         self.initial_lock_time = int(INITIAL_LOCK_TIME or (self.lock_time * 2))
         self.heartbeat_interval = int(HEARTBEAT_INTERVAL or 1)
         self.server_uri = server_uri.split(',')
-        import memcache
-        self.mc = memcache.Client(self.server_uri)
+        import pylibmc
+        self.mc = pylibmc.Client(self.server_uri)
 
-    def acquire_lock(self, identifier):
+    def acquire_lock(self):
         value = "%s:%s" % (HOST_IDENTIFIER, '0')
-        return self.rds.execute_command('SET', self.lock_key, value, 'NX', 'EX', self.initial_lock_time)
+        return self.mc.set(self.lock_key, value, time=self.initial_lock_time)
 
     def refresh_lock(self, identifier, pid):
         value = "%s:%s" % (HOST_IDENTIFIER, pid)
-        mc.set(self.lock_key, value, time=LOCK_TIME)
+        self.mc.set(self.lock_key, value, time=LOCK_TIME)
         return True
 
 
@@ -180,7 +180,7 @@ class MongoLock(Lock):
     def __init__(self, server_uri):
         self.server_uri = server_uri
 
-    def acquire_lock(self, identifier):
+    def acquire_lock(self):
         return False
 
     def refresh_lock(self, identifier, pid):
@@ -190,7 +190,7 @@ class MongoLock(Lock):
 if REDIS_SERVER:
     LOCK = RedisLock(REDIS_SERVER)
 elif MEMCACHED_SERVERS:
-    LOCK = MemcacheLock(REDIS_SERVER)
+    LOCK = MemcacheLock(MEMCACHED_SERVERS)
 elif RABBITMQ_SERVER:
     LOCK = RabbitMQLock(RABBITMQ_SERVER)
 elif POSTGRES_SERVER:
