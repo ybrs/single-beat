@@ -7,6 +7,7 @@ import logging
 import signal
 
 from locks import LOCK
+from log import SingleBeatLog
 
 ARGS = sys.argv[1:]
 IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER') or ARGS[0]
@@ -18,16 +19,17 @@ INITIAL_LOCK_TIME = int(os.environ.get('SINGLE_BEAT_INITIAL_LOCK_TIME',
 HEARTBEAT_INTERVAL = int(os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL', 1))
 HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER',
                                  socket.gethostname())
-LOG_LEVEL = os.environ.get('SINGLE_BEAT_LOG_LEVEL', 'warn')
 
 # wait_mode can be, supervisored or heartbeat
 WAIT_MODE = os.environ.get('SINGLE_BEAT_WAIT_MODE', 'heartbeat')
 assert WAIT_MODE in ('supervised', 'heartbeat')
 WAIT_BEFORE_DIE = int(os.environ.get('SINGLE_BEAT_WAIT_BEFORE_DIE', 60))
 
+# Log config
+LOG_LEVEL = os.environ.get('SINGLE_BEAT_LOG_LEVEL', 'warn')
+LOG_FILENAME = os.environ.get('SINGLE_BEAT_LOG_FILENAME', None)
 numeric_log_level = getattr(logging, LOG_LEVEL.upper(), None)
-logging.basicConfig(level=numeric_log_level)
-logger = logging.getLogger(__name__)
+logger = SingleBeatLog(level=numeric_log_level, filename=LOG_FILENAME).logger
 
 LOCK.identifier = IDENTIFIER
 

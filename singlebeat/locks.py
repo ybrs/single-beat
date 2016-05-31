@@ -11,7 +11,7 @@ IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER') or ARGS[0]
 HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER',
                                  socket.gethostname())
 
-LOCK_TIME = os.environ.get('SINGLE_BEAT_LOCK_TIME')
+LOCK_TIME = int(os.environ.get('SINGLE_BEAT_LOCK_TIME', 5))
 INITIAL_LOCK_TIME = os.environ.get('SINGLE_BEAT_INITIAL_LOCK_TIME')
 HEARTBEAT_INTERVAL = os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL')
 
@@ -31,7 +31,7 @@ class Lock(object):
     def acquire_lock(self):
         raise NotImplementedError
 
-    def refresh_lock(self, identifier, pid):
+    def refresh_lock(self, pid):
         raise NotImplementedError
 
 
@@ -49,7 +49,7 @@ class RedisLock(Lock):
         value = "%s:%s" % (HOST_IDENTIFIER, '0')
         return self.rds.execute_command('SET', self.lock_key, value, 'NX', 'EX', self.initial_lock_time)
 
-    def refresh_lock(self, identifier, pid):
+    def refresh_lock(self, pid):
         value = "%s:%s" % (HOST_IDENTIFIER, pid)
         return self.rds.set(self.lock_key, value, ex=self.lock_time)
 
@@ -62,12 +62,15 @@ class MemcacheLock(Lock):
         self.server_uri = server_uri.split(',')
         import pylibmc
         self.mc = pylibmc.Client(self.server_uri)
+        logger.debug('MemcacheLock init. lock_time={}, heartbeat_interval={}, server_uri={}'.format(
+            self.lock_time, self.heartbeat_interval, self.server_uri))
 
     def acquire_lock(self):
         value = "%s:%s" % (HOST_IDENTIFIER, '0')
+        logger.debug('MemcacheLock acquire lock. {}={}'.format(self.lock_key, value))
         return self.mc.set(self.lock_key, value, time=self.initial_lock_time)
 
-    def refresh_lock(self, identifier, pid):
+    def refresh_lock(self, pid):
         value = "%s:%s" % (HOST_IDENTIFIER, pid)
         self.mc.set(self.lock_key, value, time=LOCK_TIME)
         return True
@@ -183,7 +186,7 @@ class MongoLock(Lock):
     def acquire_lock(self):
         return False
 
-    def refresh_lock(self, identifier, pid):
+    def refresh_lock(self, pid):
         return False
 
 
