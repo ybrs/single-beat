@@ -12,14 +12,15 @@ HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER',
                                  socket.gethostname())
 
 LOCK_TIME = int(os.environ.get('SINGLE_BEAT_LOCK_TIME', 5))
-INITIAL_LOCK_TIME = os.environ.get('SINGLE_BEAT_INITIAL_LOCK_TIME')
-HEARTBEAT_INTERVAL = os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL')
+INITIAL_LOCK_TIME = int(os.environ.get('SINGLE_BEAT_INITIAL_LOCK_TIME',
+                                       LOCK_TIME * 2))
+HEARTBEAT_INTERVAL = int(os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL', 1))
 
+MEMCACHED_SERVERS = os.environ.get('SINGLE_BEAT_MEMCACHED_SERVER')
+MONGO_SERVER = os.environ.get('SINGLE_BEAT_MONGO_SERVER')
+POSTGRES_SERVER = os.environ.get('SINGLE_BEAT_POSTGRES_SERVER')
 RABBITMQ_SERVER = os.environ.get('SINGLE_BEAT_RABBITMQ_SERVER')
 REDIS_SERVER = os.environ.get('SINGLE_BEAT_REDIS_SERVER')
-POSTGRES_SERVER = os.environ.get('SINGLE_BEAT_POSTGRES_SERVER')
-MONGO_SERVER = os.environ.get('SINGLE_BEAT_MONGO_SERVER')
-MEMCACHED_SERVERS = os.environ.get('SINGLE_BEAT_MEMCACHED_SERVER')
 
 
 class Lock(object):
@@ -195,12 +196,13 @@ if REDIS_SERVER:
 elif MEMCACHED_SERVERS:
     LOCK = MemcacheLock(MEMCACHED_SERVERS)
 elif RABBITMQ_SERVER:
+    raise NotImplemented("RabbitMQ lock not implemented yet.")
     LOCK = RabbitMQLock(RABBITMQ_SERVER)
 elif POSTGRES_SERVER:
+    raise NotImplemented("Postgres lock not implemented yet.")
     LOCK = PostgresLock(POSTGRES_SERVER)
 elif MONGO_SERVER:
+    raise NotImplemented("MongoDB lock not implemented yet.")
     LOCK = MongoLock(MONGO_SERVER)
 else:
-    LOCK = RedisLock('redis://localhost:6379')
-    # TODO: try catch redis lock....then try catch memcache lock as defaults
-    # LOCK = MemcacheLock('127.0.0.1:11211')
+    raise RuntimeError("No locking backend found. Please choose one.")
