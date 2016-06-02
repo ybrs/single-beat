@@ -2,37 +2,28 @@ import os
 import sys
 import pyuv
 import time
-import socket
-import redis
 import logging
 import signal
 
-REDIS_SERVER = os.environ.get('SINGLE_BEAT_REDIS_SERVER',
-                              'redis://localhost:6379')
-IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER', None)
-LOCK_TIME = int(os.environ.get('SINGLE_BEAT_LOCK_TIME', 5))
-INITIAL_LOCK_TIME = int(os.environ.get('SINGLE_BEAT_INITIAL_LOCK_TIME',
-                                       LOCK_TIME * 2))
-assert LOCK_TIME < INITIAL_LOCK_TIME, "inital lock time must be greater than lock time "
+from locks import LOCK
+from log import SingleBeatLog
 
-HEARTBEAT_INTERVAL = int(os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL', 1))
-assert HEARTBEAT_INTERVAL < (LOCK_TIME / 2.0), "SINGLE_BEAT_HEARTBEAT_INTERVAL must be smaller than SINGLE_BEAT_LOCK_TIME / 2"
-
-HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER',
-                                 socket.gethostname())
-LOG_LEVEL = os.environ.get('SINGLE_BEAT_LOG_LEVEL', 'warn')
+ARGS = sys.argv[1:]
+IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER') or ARGS[0]
 
 # wait_mode can be, supervisored or heartbeat
 WAIT_MODE = os.environ.get('SINGLE_BEAT_WAIT_MODE', 'heartbeat')
 assert WAIT_MODE in ('supervised', 'heartbeat')
 WAIT_BEFORE_DIE = int(os.environ.get('SINGLE_BEAT_WAIT_BEFORE_DIE', 60))
 
+# Log config
+LOG_LEVEL = os.environ.get('SINGLE_BEAT_LOG_LEVEL', 'warn')
+LOG_FILENAME = os.environ.get('SINGLE_BEAT_LOG_FILENAME', None)
 numeric_log_level = getattr(logging, LOG_LEVEL.upper(), None)
-logging.basicConfig(level=numeric_log_level)
-logger = logging.getLogger(__name__)
+logger = SingleBeatLog(level=numeric_log_level, filename=LOG_FILENAME).logger
 
-rds = redis.Redis.from_url(REDIS_SERVER)
-rds.ping()
+LOCK.identifier = IDENTIFIER
+
 
 class Process(object):
     def __init__(self, args):
@@ -40,7 +31,7 @@ class Process(object):
         self.state = None
         self.t1 = time.time()
 
-        self.identifier = IDENTIFIER or self.args[0]
+        self.identifier = IDENTIFIER
 
         signal.signal(signal.SIGTERM, self.sigterm_handler)
         signal.signal(signal.SIGINT, self.sigterm_handler)
@@ -65,22 +56,15 @@ class Process(object):
                      time.time() - self.t1, self.state)
         self.t1 = time.time()
         if self.state == 'WAITING':
-            if self.acquire_lock(self.identifier):
+            if LOCK.acquire_lock():
                 self.spawn_process()
             else:
                 if WAIT_MODE == 'supervised':
-                    logging.debug("already running, will exit after %s seconds"
-                                  % WAIT_BEFORE_DIE)
+                    logging.debug("already running, will exit after %s seconds" % WAIT_BEFORE_DIE)
                     time.sleep(WAIT_BEFORE_DIE)
                     sys.exit()
         elif self.state == "RUNNING":
-            rds.set("SINGLE_BEAT_%s" % self.identifier,
-                    "%s:%s" % (HOST_IDENTIFIER, self.proc.pid), ex=LOCK_TIME)
-
-    def acquire_lock(self, identifier):
-        return rds.execute_command('SET', 'SINGLE_BEAT_%s' % self.identifier,
-                                   "%s:%s" % (HOST_IDENTIFIER, '0'),
-                                   'NX', 'EX', INITIAL_LOCK_TIME)
+            LOCK.refresh_lock(self.proc.pid)
 
     def sigterm_handler(self, signum, frame):
         logging.debug("our state %s", self.state)
@@ -93,7 +77,7 @@ class Process(object):
 
     def run(self):
         # runs every 1 second
-        self.timer.start(self.timer_cb, 0.1, HEARTBEAT_INTERVAL)
+        self.timer.start(self.timer_cb, 0.1, LOCK.heartbeat_interval)
         self.loop.run()
 
     def spawn_process(self):
@@ -125,7 +109,7 @@ class Process(object):
 
 
 def run_process():
-    process = Process(sys.argv[1:])
+    process = Process(ARGS)
     process.run()
 
 if __name__ == "__main__":
