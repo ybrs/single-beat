@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 rds = redis.Redis.from_url(REDIS_SERVER)
 rds.ping()
 
+
 class Process(object):
     def __init__(self, args):
         self.args = args
