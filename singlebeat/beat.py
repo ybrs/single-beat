@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 rds = redis.Redis.from_url(REDIS_SERVER)
 rds.ping()
 
+
 class Process(object):
     def __init__(self, args):
         self.args = args
@@ -65,7 +66,7 @@ class Process(object):
                      time.time() - self.t1, self.state)
         self.t1 = time.time()
         if self.state == 'WAITING':
-            if self.acquire_lock(self.identifier):
+            if self.acquire_lock():
                 self.spawn_process()
             else:
                 if WAIT_MODE == 'supervised':
@@ -77,7 +78,7 @@ class Process(object):
             rds.set("SINGLE_BEAT_%s" % self.identifier,
                     "%s:%s" % (HOST_IDENTIFIER, self.proc.pid), ex=LOCK_TIME)
 
-    def acquire_lock(self, identifier):
+    def acquire_lock(self):
         return rds.execute_command('SET', 'SINGLE_BEAT_%s' % self.identifier,
                                    "%s:%s" % (HOST_IDENTIFIER, '0'),
                                    'NX', 'EX', INITIAL_LOCK_TIME)
