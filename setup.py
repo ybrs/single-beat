@@ -9,7 +9,7 @@ setup(
     packages=['singlebeat'],
     zip_safe=True,
     install_requires=[
-        'pyuv >= 0.10,<1.0.0',
+        'pyuv == 1.3.0',
         'redis >= 2.9.1'
     ],
     entry_points={

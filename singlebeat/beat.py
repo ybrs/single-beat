@@ -99,7 +99,6 @@ class Process(object):
 
     def spawn_process(self):
         args = sys.argv[1:]
-        self.proc = pyuv.Process(self.loop)
 
         stdout_pipe = pyuv.Pipe(self.loop)
         stderr_pipe = pyuv.Pipe(self.loop)
@@ -115,12 +114,11 @@ class Process(object):
 
         self.state = "RUNNING"
 
-        self.proc.spawn(file=args[0],
-                        args=args[1:],
+        self.proc = pyuv.Process.spawn(args=args,
                         cwd=os.getcwd(),
+                        loop=self.loop,
                         exit_callback=self.proc_exit_cb,
                         stdio=stdio)
-
         stdout_pipe.start_read(self.stdout_read_cb)
         stderr_pipe.start_read(self.stderr_read_cb)
 
