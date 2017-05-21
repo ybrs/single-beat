@@ -152,7 +152,6 @@ class Process(object):
         self.sprocess.stdout.read_until_close(streaming_callback=self.stdout_read_cb)
         self.sprocess.stderr.read_until_close(streaming_callback=self.stderr_read_cb)
 
-
 def run_process():
     process = Process(sys.argv[1:])
     process.run()

@@ -1,0 +1,6 @@
+Version 0.2.0
+==============
+ - Moved to tornado's ioloop, pyuv was hard to install, had breaking changes etc.
+ - Code cleanup/refactor
+ - Simple unit test
+ - Started putting a changelog
