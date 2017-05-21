@@ -3,7 +3,9 @@ Single-beat
 Single-beat is a nice little application that ensures only one instance of your process runs across your servers.
 
 Such as celerybeat (or some kind of daily mail sender, orphan file cleaner etc...) needs to be running only on one server,
-but if that server gets down, well, you go and start it at another server etc. As we all hate manually doing things, single-beat automates this process.
+but if that server gets down, well, you go and start it at another server etc. 
+
+As we all hate manually doing things, single-beat automates this process.
 
 
 How
@@ -67,9 +69,12 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
 - SINGLE_BEAT_INITIAL_LOCK_TIME (default 2 * SINGLE_BEAT_LOCK_TIME seconds)
 - SINGLE_BEAT_HEARTBEAT_INTERVAL (default 1 second)
 
-    when starting your process, we set a key with 10 second expiration (INITIAL_LOCK_TIME) in redis server, other single-beat processes checks if that key exists - if it exists they won't spawn children. We continue to update that key every 1 second (HEARTBEAT_INTERVAL) setting it with a ttl of 5 seconds (LOCK_TIME)
+    when starting your process, we set a key with 10 second expiration (INITIAL_LOCK_TIME) in redis server, 
+    other single-beat processes checks if that key exists - if it exists they won't spawn children. 
+    
+    We continue to update that key every 1 second (HEARTBEAT_INTERVAL) setting it with a ttl of 5 seconds (LOCK_TIME)
 
-    this should work, but you might want to give more relaxed intervals, like:
+    This should work, but you might want to give more relaxed intervals, like:
 
     ```bash
     SINGLE_BEAT_LOCK_TIME=300 SINGLE_BEAT_HEARTBEAT_INTERVAL=60 single-beat celery beat
@@ -77,7 +82,7 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
 
 - SINGLE_BEAT_HOST_IDENTIFIER (default socket.gethostname)
 
-    we set the name of the host and the process id as lock keys value, so you can check where does your process currently working.
+    we set the name of the host and the process id as lock keys value, so you can check where your process lives.
 
     ```bash
     SINGLE_BEAT_IDENTIFIER='celery-beat' single-beat celery beat

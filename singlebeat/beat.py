@@ -1,11 +1,14 @@
 import os
 import sys
-import pyuv
 import time
 import socket
 import redis
 import logging
 import signal
+import tornado.ioloop
+import tornado.process
+import subprocess
+
 
 REDIS_SERVER = os.environ.get('SINGLE_BEAT_REDIS_SERVER',
                               'redis://localhost:6379')
@@ -46,22 +49,19 @@ class Process(object):
         signal.signal(signal.SIGTERM, self.sigterm_handler)
         signal.signal(signal.SIGINT, self.sigterm_handler)
 
-        self.loop = pyuv.Loop.default_loop()
-        self.timer = pyuv.Timer(self.loop)
         self.state = 'WAITING'
+        self.ioloop = tornado.ioloop.IOLoop.instance()
 
-    def proc_exit_cb(self, proc, exit_status, term_signal):
+    def proc_exit_cb(self, exit_status):
         sys.exit(exit_status)
 
-    def stdout_read_cb(self, handle, data, error):
-        if data:
-            sys.stdout.write(data.decode('utf-8'))
+    def stdout_read_cb(self, data):
+        sys.stdout.write(data)
 
-    def stderr_read_cb(self, handle, data, error):
-        if data:
-            sys.stdout.write(data.decode('utf-8'))
+    def stderr_read_cb(self, data):
+        sys.stdout.write(data)
 
-    def timer_cb(self, timer):
+    def timer_cb(self):
         logger.debug("timer called %s state=%s",
                      time.time() - self.t1, self.state)
         self.t1 = time.time()
@@ -76,7 +76,7 @@ class Process(object):
                     sys.exit()
         elif self.state == "RUNNING":
             rds.set("SINGLE_BEAT_%s" % self.identifier,
-                    "%s:%s" % (HOST_IDENTIFIER, self.proc.pid), ex=LOCK_TIME)
+                    "%s:%s" % (HOST_IDENTIFIER, self.sprocess.pid), ex=LOCK_TIME)
 
     def acquire_lock(self):
         return rds.execute_command('SET', 'SINGLE_BEAT_%s' % self.identifier,
@@ -89,40 +89,32 @@ class Process(object):
             sys.exit(signum)
         elif self.state == 'RUNNING':
             logger.debug('already running sending signal to child - %s',
-                         self.proc.pid)
-            os.kill(self.proc.pid, signum)
+                         self.sprocess.pid)
+            os.kill(self.sprocess.pid, signum)
+        self.ioloop.stop()
 
     def run(self):
-        # runs every 1 second
-        self.timer.start(self.timer_cb, 0.1, HEARTBEAT_INTERVAL)
-        self.loop.run()
+        self.pc = tornado.ioloop.PeriodicCallback(self.timer_cb, HEARTBEAT_INTERVAL * 1000)
+        self.pc.start()
+        self.ioloop.start()
 
     def spawn_process(self):
-        args = sys.argv[1:]
-        self.proc = pyuv.Process(self.loop)
-
-        stdout_pipe = pyuv.Pipe(self.loop)
-        stderr_pipe = pyuv.Pipe(self.loop)
-
-        stdio = []
-        stdio.append(pyuv.StdIO(flags=pyuv.UV_IGNORE))
-        stdio.append(pyuv.StdIO(
-            stream=stdout_pipe,
-            flags=pyuv.UV_CREATE_PIPE | pyuv.UV_WRITABLE_PIPE))
-        stdio.append(pyuv.StdIO(
-            stream=stderr_pipe,
-            flags=pyuv.UV_CREATE_PIPE | pyuv.UV_WRITABLE_PIPE))
+        STREAM = tornado.process.Subprocess.STREAM
+        cmd = sys.argv[1:]
+        env = os.environ
 
         self.state = "RUNNING"
 
-        self.proc.spawn(file=args[0],
-                        args=args[1:],
-                        cwd=os.getcwd(),
-                        exit_callback=self.proc_exit_cb,
-                        stdio=stdio)
+        self.sprocess = tornado.process.Subprocess(cmd,
+                    env=env,
+                    stdin=subprocess.PIPE,
+                    stdout=STREAM,
+                    stderr=STREAM
+                   )
+        self.sprocess.set_exit_callback(self.proc_exit_cb)
 
-        stdout_pipe.start_read(self.stdout_read_cb)
-        stderr_pipe.start_read(self.stderr_read_cb)
+        self.sprocess.stdout.read_until_close(streaming_callback=self.stdout_read_cb)
+        self.sprocess.stderr.read_until_close(streaming_callback=self.stderr_read_cb)
 
 
 def run_process():
