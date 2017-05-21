@@ -118,10 +118,13 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
 
 - SINGLE_BEAT_WAIT_MODE (default heartbeat)
 - SINGLE_BEAT_WAIT_BEFORE_DIE (default 60 seconds)
-
-    instead of checking the process every second (heartbeat mode) you can put single beat into supervisor, and die after 60 seconds (SINGLE_BEAT_WAIT_BEFORE_DIE), so supervisor will respawn it again, single-beat will check if there is another process in the cluster, will wait for 60 seconds and die nicely, so supervisor will respawn it....
-
-    easier to explain with code,
+    
+    singlebeat has two different modes:
+        - heartbeat (default)
+        - supervised
+    
+    In heartbeat mode, single-beat is responsible for everything, spawning a process checking its status, publishing etc.
+    In supervised mode, single-beat starts, checks if the child is running somewhere and waits for a while and then exits. So supervisord - or another scheduler picks up and restarts single-beat.
 
     on first server
 

@@ -9,34 +9,42 @@ import tornado.ioloop
 import tornado.process
 import subprocess
 
+def noop(i):
+    return i
 
-REDIS_SERVER = os.environ.get('SINGLE_BEAT_REDIS_SERVER',
-                              'redis://localhost:6379')
-IDENTIFIER = os.environ.get('SINGLE_BEAT_IDENTIFIER', None)
-LOCK_TIME = int(os.environ.get('SINGLE_BEAT_LOCK_TIME', 5))
-INITIAL_LOCK_TIME = int(os.environ.get('SINGLE_BEAT_INITIAL_LOCK_TIME',
-                                       LOCK_TIME * 2))
-assert LOCK_TIME < INITIAL_LOCK_TIME, "inital lock time must be greater than lock time "
+def env(identifier, default, type=noop):
+    return type(os.getenv('SINGLE_BEAT_%s' % identifier, default))
 
-HEARTBEAT_INTERVAL = int(os.environ.get('SINGLE_BEAT_HEARTBEAT_INTERVAL', 1))
-assert HEARTBEAT_INTERVAL < (LOCK_TIME / 2.0), "SINGLE_BEAT_HEARTBEAT_INTERVAL must be smaller than SINGLE_BEAT_LOCK_TIME / 2"
+class Config(object):
+    REDIS_SERVER = env('REDIS_SERVER', 'redis://localhost:6379')
+    IDENTIFIER = env('IDENTIFIER', None)
+    LOCK_TIME = env('LOCK_TIME', 5, int)
+    INITIAL_LOCK_TIME = env('INITIAL_LOCK_TIME', LOCK_TIME * 2, int)
+    HEARTBEAT_INTERVAL = env('HEARTBEAT_INTERVAL', 1, int)
+    HOST_IDENTIFIER = env('HOST_IDENTIFIER', socket.gethostname())
+    LOG_LEVEL = env('LOG_LEVEL', 'warn')
+    # wait_mode can be, supervisored or heartbeat
+    WAIT_MODE = env('WAIT_MODE', 'heartbeat')
+    WAIT_BEFORE_DIE = env('WAIT_BEFORE_DIE', 60, int)
 
-HOST_IDENTIFIER = os.environ.get('SINGLE_BEAT_HOST_IDENTIFIER',
-                                 socket.gethostname())
-LOG_LEVEL = os.environ.get('SINGLE_BEAT_LOG_LEVEL', 'warn')
+    def check(self, cond, message):
+        if not cond:
+            raise Exception(message)
 
-# wait_mode can be, supervisored or heartbeat
-WAIT_MODE = os.environ.get('SINGLE_BEAT_WAIT_MODE', 'heartbeat')
-assert WAIT_MODE in ('supervised', 'heartbeat')
-WAIT_BEFORE_DIE = int(os.environ.get('SINGLE_BEAT_WAIT_BEFORE_DIE', 60))
+    def checks(self):
+        self.check(self.LOCK_TIME < self.INITIAL_LOCK_TIME, "inital lock time must be greater than lock time")
+        self.check(self.HEARTBEAT_INTERVAL < (self.LOCK_TIME / 2.0), "SINGLE_BEAT_HEARTBEAT_INTERVAL must be smaller than SINGLE_BEAT_LOCK_TIME / 2")
+        self.check(self.WAIT_MODE in ('supervised', 'heartbeat'), 'undefined wait mode')
 
-numeric_log_level = getattr(logging, LOG_LEVEL.upper(), None)
+config = Config()
+config.checks()
+
+numeric_log_level = getattr(logging, config.LOG_LEVEL.upper(), None)
 logging.basicConfig(level=numeric_log_level)
 logger = logging.getLogger(__name__)
 
-rds = redis.Redis.from_url(REDIS_SERVER)
+rds = redis.Redis.from_url(config.REDIS_SERVER)
 rds.ping()
-
 
 def get_process_identifier(args):
     """by looking at arguments we try to generate a proper identifier
@@ -52,7 +60,7 @@ class Process(object):
         self.state = None
         self.t1 = time.time()
 
-        self.identifier = IDENTIFIER or get_process_identifier(self.args[1:])
+        self.identifier = config.IDENTIFIER or get_process_identifier(self.args[1:])
 
         signal.signal(signal.SIGTERM, self.sigterm_handler)
         signal.signal(signal.SIGINT, self.sigterm_handler)
@@ -61,7 +69,6 @@ class Process(object):
         self.pc = None
         self.state = 'WAITING'
         self.ioloop = tornado.ioloop.IOLoop.instance()
-
 
     def proc_exit_cb(self, exit_status):
         """When child exits we use the same exit status code"""
@@ -73,27 +80,33 @@ class Process(object):
     def stderr_read_cb(self, data):
         sys.stdout.write(data)
 
+    def timer_cb_waiting(self):
+        if self.acquire_lock():
+            return self.spawn_process()
+        # couldnt acquire lock
+        if config.WAIT_MODE == 'supervised':
+            logging.debug("already running, will exit after %s seconds"
+                          % config.WAIT_BEFORE_DIE)
+            time.sleep(config.WAIT_BEFORE_DIE)
+            sys.exit()
+
+    def timer_cb_running(self):
+        rds.set("SINGLE_BEAT_{identifier}".format(identifier=self.identifier),
+                "{host_identifier}:{pid}".format(host_identifier=config.HOST_IDENTIFIER,
+                                                 pid=self.sprocess.pid),
+                ex=config.LOCK_TIME)
+
     def timer_cb(self):
         logger.debug("timer called %s state=%s",
                      time.time() - self.t1, self.state)
         self.t1 = time.time()
-        if self.state == 'WAITING':
-            if self.acquire_lock():
-                self.spawn_process()
-            else:
-                if WAIT_MODE == 'supervised':
-                    logging.debug("already running, will exit after %s seconds"
-                                  % WAIT_BEFORE_DIE)
-                    time.sleep(WAIT_BEFORE_DIE)
-                    sys.exit()
-        elif self.state == "RUNNING":
-            rds.set("SINGLE_BEAT_%s" % self.identifier,
-                    "%s:%s" % (HOST_IDENTIFIER, self.sprocess.pid), ex=LOCK_TIME)
+        fn = getattr(self, 'timer_cb_{}'.format(self.state.lower()))
+        fn()
 
     def acquire_lock(self):
         return rds.execute_command('SET', 'SINGLE_BEAT_%s' % self.identifier,
-                                   "%s:%s" % (HOST_IDENTIFIER, '0'),
-                                   'NX', 'EX', INITIAL_LOCK_TIME)
+                                   "%s:%s" % (config.HOST_IDENTIFIER, '0'),
+                                   'NX', 'EX', config.INITIAL_LOCK_TIME)
 
     def sigterm_handler(self, signum, frame):
         """ When we get term signal
@@ -117,7 +130,7 @@ class Process(object):
         self.ioloop.stop()
 
     def run(self):
-        self.pc = tornado.ioloop.PeriodicCallback(self.timer_cb, HEARTBEAT_INTERVAL * 1000)
+        self.pc = tornado.ioloop.PeriodicCallback(self.timer_cb, config.HEARTBEAT_INTERVAL * 1000)
         self.pc.start()
         self.ioloop.start()
 
