@@ -12,6 +12,9 @@ setup(
         'tornado>=4.2.1',
         'redis >= 2.9.1'
     ],
+    test_require=[
+        'psutil>=5.2.2'
+    ],
     entry_points={
         'console_scripts': [
             'single-beat = singlebeat.beat:run_process',

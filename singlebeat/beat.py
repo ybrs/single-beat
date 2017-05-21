@@ -38,21 +38,33 @@ rds = redis.Redis.from_url(REDIS_SERVER)
 rds.ping()
 
 
+def get_process_identifier(args):
+    """by looking at arguments we try to generate a proper identifier
+        >>> get_process_identifier(['python', 'echo.py', '1'])
+        'python_echo.py_1'
+    """
+    return '_'.join(args)
+
+
 class Process(object):
     def __init__(self, args):
         self.args = args
         self.state = None
         self.t1 = time.time()
 
-        self.identifier = IDENTIFIER or self.args[0]
+        self.identifier = IDENTIFIER or get_process_identifier(self.args[1:])
 
         signal.signal(signal.SIGTERM, self.sigterm_handler)
         signal.signal(signal.SIGINT, self.sigterm_handler)
 
+        self.sprocess = None
+        self.pc = None
         self.state = 'WAITING'
         self.ioloop = tornado.ioloop.IOLoop.instance()
 
+
     def proc_exit_cb(self, exit_status):
+        """When child exits we use the same exit status code"""
         sys.exit(exit_status)
 
     def stdout_read_cb(self, data):
@@ -84,10 +96,21 @@ class Process(object):
                                    'NX', 'EX', INITIAL_LOCK_TIME)
 
     def sigterm_handler(self, signum, frame):
+        """ When we get term signal
+        if we are waiting and got a sigterm, we just exit.
+        if we have a child running, we pass the signal first to the child
+        then we exit.
+
+        :param signum:
+        :param frame:
+        :return:
+        """
+        assert(self.state in ('WAITING', 'RUNNING'))
         logging.debug("our state %s", self.state)
         if self.state == 'WAITING':
-            sys.exit(signum)
-        elif self.state == 'RUNNING':
+            return self.ioloop.stop()
+
+        if self.state == 'RUNNING':
             logger.debug('already running sending signal to child - %s',
                          self.sprocess.pid)
             os.kill(self.sprocess.pid, signum)
