@@ -9,6 +9,9 @@ import tornado.ioloop
 import tornado.process
 import subprocess
 
+from tornado import gen
+
+
 def noop(i):
     return i
 
@@ -46,6 +49,12 @@ logger = logging.getLogger(__name__)
 rds = redis.Redis.from_url(config.REDIS_SERVER)
 rds.ping()
 
+from toredis import Client
+host, port = config.REDIS_SERVER.replace('redis://', '').split(':')
+tredis_client = Client()
+tredis_client.connect(host=host, port=int(port))
+
+
 def get_process_identifier(args):
     """by looking at arguments we try to generate a proper identifier
         >>> get_process_identifier(['python', 'echo.py', '1'])
@@ -53,6 +62,10 @@ def get_process_identifier(args):
     """
     return '_'.join(args)
 
+class State(object):
+    PAUSED = 'paused'
+    WAITING = 'waiting'
+    RUNNING = 'running'
 
 class Process(object):
     def __init__(self, args):
@@ -67,8 +80,91 @@ class Process(object):
 
         self.sprocess = None
         self.pc = None
-        self.state = 'WAITING'
+        self.state = State.WAITING
         self.ioloop = tornado.ioloop.IOLoop.instance()
+        self.ioloop.spawn_callback(self.wait_for_commands)
+        self.log_tail = None
+        #
+        self.tail_channel_name = 'SINGLE_BEAT_TAIL_{}'.format(config.IDENTIFIER)
+        logger.debug("tail channel name - %s", self.tail_channel_name)
+
+    def command_start_tail(self):
+        self.log_tail = True
+
+    def command_stop_tail(self):
+        self.log_tail = False
+
+    def command_restart(self):
+        """
+        starts the command
+        :return:
+        """
+        pass
+
+    def command_start(self):
+        if self.sprocess and self.sprocess.pid:
+            self.state = State.RUNNING
+        else:
+            self.state = State.WAITING
+
+    def command_pause(self):
+        """pause, pauses respawning the command in all the single-beat instances,
+        so if you pause a command, well it will be paused until its started
+        :return:
+        """
+        self.state = State.PAUSED
+
+    def command_stop(self):
+        """ stops the running command, it will respawn in another instance of single-beat
+        we dont want to exit when we kill the child, we want single-beat to live but child to exit.
+        so we remove exit_callback here.
+
+        :return:
+        """
+        if not (self.sprocess and self.sprocess.pid):
+            print("state - 2")
+            return
+
+        def exit_cb(*args, **kwargs):
+            print("process exits", args, kwargs)
+            self.sprocess = None
+            if self.state == State.PAUSED:
+                # if we are paused we dont want to restart it
+                self.state = State.PAUSED
+                return
+            self.state = State.WAITING
+
+        print("state - 3")
+
+        self.sprocess.set_exit_callback(exit_cb)
+        print("killing - ", self.sprocess.pid)
+        os.kill(self.sprocess.pid, signal.SIGTERM)
+
+    def command_pid(self):
+        print("pid", self.sprocess.pid)
+
+    def pubsub_callback(self, msg):
+        if msg[0] != 'message':
+            return
+
+        fn = getattr(self, 'command_{}'.format(msg[2]), None)
+        if fn:
+            logger.debug("got command - %s running %s", msg[2], fn)
+            fn()
+
+
+    @gen.coroutine
+    def wait_for_commands(self):
+        # while True:
+            # command = yield gen.Task(tredis_client.blpop, 'single_beat_client_1', 5)
+            # print("command", command)
+            # print("hello")
+            # response = yield gen.Task(tredis_client.subscribe, "foobar")
+        # response = tredis_client.subscribe "foobar")
+        # print(response)
+        tredis_client.subscribe('SB_{}'.format(config.IDENTIFIER), self.pubsub_callback)
+        logger.debug('subcribed to redis channel %s', 'SINGLE_BEAT_COMMAND_{}'.format(config.IDENTIFIER))
+            # print("response")
 
     def proc_exit_cb(self, exit_status):
         """When child exits we use the same exit status code"""
@@ -76,13 +172,32 @@ class Process(object):
 
     def stdout_read_cb(self, data):
         sys.stdout.write(data)
+        if self.log_tail:
+           rds.publish(self.tail_channel_name, data)
 
     def stderr_read_cb(self, data):
-        sys.stdout.write(data)
+        sys.stderr.write(data)
+        if self.log_tail:
+            rds.publish(self.tail_channel_name, data)
+
+    def publish_process(self):
+        rds.set("SINGLE_BEAT_{identifier}".format(identifier=self.identifier),
+                "{host_identifier}:{pid}".format(host_identifier=config.HOST_IDENTIFIER,
+                                                 pid=self.sprocess.pid),
+                ex=config.LOCK_TIME)
+
+    def timer_cb_paused(self):
+        if self.sprocess and self.sprocess.pid:
+            self.publish_process()
 
     def timer_cb_waiting(self):
+        if self.state == State.PAUSED:
+            # if we are paused, don't try to do anything.
+            return
+
         if self.acquire_lock():
             return self.spawn_process()
+
         # couldnt acquire lock
         if config.WAIT_MODE == 'supervised':
             logging.debug("already running, will exit after %s seconds"
@@ -91,10 +206,8 @@ class Process(object):
             sys.exit()
 
     def timer_cb_running(self):
-        rds.set("SINGLE_BEAT_{identifier}".format(identifier=self.identifier),
-                "{host_identifier}:{pid}".format(host_identifier=config.HOST_IDENTIFIER,
-                                                 pid=self.sprocess.pid),
-                ex=config.LOCK_TIME)
+        if self.sprocess.pid:
+            self.publish_process()
 
     def timer_cb(self):
         logger.debug("timer called %s state=%s",
@@ -118,15 +231,20 @@ class Process(object):
         :param frame:
         :return:
         """
-        assert(self.state in ('WAITING', 'RUNNING'))
+        assert(self.state in (State.WAITING, State.RUNNING, State.PAUSED))
         logging.debug("our state %s", self.state)
-        if self.state == 'WAITING':
+        if self.state == State.WAITING:
             return self.ioloop.stop()
 
-        if self.state == 'RUNNING':
+        if self.state == State.RUNNING:
             logger.debug('already running sending signal to child - %s',
                          self.sprocess.pid)
             os.kill(self.sprocess.pid, signum)
+
+        if self.state == State.PAUSED:
+            # TODO:
+            pass
+
         self.ioloop.stop()
 
     def run(self):
@@ -139,7 +257,7 @@ class Process(object):
         cmd = sys.argv[1:]
         env = os.environ
 
-        self.state = "RUNNING"
+        self.state = State.RUNNING
 
         self.sprocess = tornado.process.Subprocess(cmd,
                     env=env,
