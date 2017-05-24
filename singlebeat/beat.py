@@ -88,10 +88,10 @@ class Process(object):
         sys.exit(exit_status)
 
     def stdout_read_cb(self, data):
-        sys.stdout.write(data)
+        sys.stdout.write(data.decode())
 
     def stderr_read_cb(self, data):
-        sys.stdout.write(data)
+        sys.stdout.write(data.decode())
 
     def timer_cb_waiting(self):
         if self.acquire_lock():
