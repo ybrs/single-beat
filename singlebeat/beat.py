@@ -18,9 +18,9 @@ def env(identifier, default, type=noop):
 
 class Config(object):
     REDIS_SERVER = env('REDIS_SERVER', 'redis://localhost:6379')
-    REDIS_SENTINEL = env('SINGLE_BEAT_REDIS_SENTINEL', None)
-    REDIS_SENTINEL_MASTER = env('SINGLE_BEAT_REDIS_SENTINEL_MASTER', 'mymaster')
-    REDIS_SENTINEL_DB = env('SINGLE_BEAT_REDIS_SENTINEL_DB', 0)
+    REDIS_SENTINEL = env('REDIS_SENTINEL', None)
+    REDIS_SENTINEL_MASTER = env('REDIS_SENTINEL_MASTER', 'mymaster')
+    REDIS_SENTINEL_DB = env('REDIS_SENTINEL_DB', 0)
     IDENTIFIER = env('IDENTIFIER', None)
     LOCK_TIME = env('LOCK_TIME', 5, int)
     INITIAL_LOCK_TIME = env('INITIAL_LOCK_TIME', LOCK_TIME * 2, int)
@@ -47,15 +47,15 @@ numeric_log_level = getattr(logging, config.LOG_LEVEL.upper(), None)
 logging.basicConfig(level=numeric_log_level)
 logger = logging.getLogger(__name__)
 
-if REDIS_SENTINEL:
-    sentinels = [tuple(s.split(':')) for s in REDIS_SENTINEL.split(';')]
+if config.REDIS_SENTINEL:
+    sentinels = [tuple(s.split(':')) for s in config.REDIS_SENTINEL.split(';')]
     sentinel = redis.sentinel.Sentinel(sentinels,
-                                       db=REDIS_SENTINEL_DB,
+                                       db=config.REDIS_SENTINEL_DB,
                                        socket_timeout=0.1)
-    master = sentinel.discover_master(REDIS_SENTINEL_MASTER)
+    master = sentinel.discover_master(config.REDIS_SENTINEL_MASTER)
     logger.debug('master: {}'.format(master))
 else:
-    rds = redis.Redis.from_url(REDIS_SERVER)
+    rds = redis.Redis.from_url(config.REDIS_SERVER)
     rds.ping()
 
 
@@ -111,8 +111,8 @@ class Process(object):
                 ex=config.LOCK_TIME)
 
     def get_client(self):
-        if REDIS_SENTINEL:
-            return sentinel.master_for(REDIS_SENTINEL_MASTER,
+        if config.REDIS_SENTINEL:
+            return sentinel.master_for(config.REDIS_SENTINEL_MASTER,
                                        redis_class=redis.Redis)
         return rds
 
