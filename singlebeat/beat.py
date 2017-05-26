@@ -39,6 +39,25 @@ class Config(object):
         self.check(self.LOCK_TIME < self.INITIAL_LOCK_TIME, "inital lock time must be greater than lock time")
         self.check(self.HEARTBEAT_INTERVAL < (self.LOCK_TIME / 2.0), "SINGLE_BEAT_HEARTBEAT_INTERVAL must be smaller than SINGLE_BEAT_LOCK_TIME / 2")
         self.check(self.WAIT_MODE in ('supervised', 'heartbeat'), 'undefined wait mode')
+        if self.REDIS_SENTINEL:
+            master = self._sentinel.discover_master(self.REDIS_SENTINEL_MASTER)
+        else:
+            self._redis.ping()
+
+    def get_redis(self):
+        if self.REDIS_SENTINEL:
+            return self._sentinel.master_for(self.REDIS_SENTINEL_MASTER,
+                                       redis_class=redis.Redis)
+        return self._redis
+
+    def __init__(self):
+        if self.REDIS_SENTINEL:
+            sentinels = [tuple(s.split(':')) for s in self.REDIS_SENTINEL.split(';')]
+            self._sentinel = redis.sentinel.Sentinel(sentinels,
+                                                     db=self.REDIS_SENTINEL_DB,
+                                                     socket_timeout=0.1)
+        else:
+            self._redis = redis.Redis.from_url(self.REDIS_SERVER)
 
 config = Config()
 config.checks()
@@ -46,17 +65,6 @@ config.checks()
 numeric_log_level = getattr(logging, config.LOG_LEVEL.upper(), None)
 logging.basicConfig(level=numeric_log_level)
 logger = logging.getLogger(__name__)
-
-if config.REDIS_SENTINEL:
-    sentinels = [tuple(s.split(':')) for s in config.REDIS_SENTINEL.split(';')]
-    sentinel = redis.sentinel.Sentinel(sentinels,
-                                       db=config.REDIS_SENTINEL_DB,
-                                       socket_timeout=0.1)
-    master = sentinel.discover_master(config.REDIS_SENTINEL_MASTER)
-    logger.debug('master: {}'.format(master))
-else:
-    rds = redis.Redis.from_url(config.REDIS_SERVER)
-    rds.ping()
 
 
 def get_process_identifier(args):
@@ -104,17 +112,11 @@ class Process(object):
             sys.exit()
 
     def timer_cb_running(self):
-        rds = self.get_client()
+        rds = config.get_redis()
         rds.set("SINGLE_BEAT_{identifier}".format(identifier=self.identifier),
                 "{host_identifier}:{pid}".format(host_identifier=config.HOST_IDENTIFIER,
                                                  pid=self.sprocess.pid),
                 ex=config.LOCK_TIME)
-
-    def get_client(self):
-        if config.REDIS_SENTINEL:
-            return sentinel.master_for(config.REDIS_SENTINEL_MASTER,
-                                       redis_class=redis.Redis)
-        return rds
 
     def timer_cb(self):
         logger.debug("timer called %s state=%s",
@@ -124,7 +126,7 @@ class Process(object):
         fn()
 
     def acquire_lock(self):
-        rds = self.get_client()
+        rds = config.get_redis()
         return rds.execute_command('SET', 'SINGLE_BEAT_%s' % self.identifier,
                                    "%s:%s" % (config.HOST_IDENTIFIER, '0'),
                                    'NX', 'EX', config.INITIAL_LOCK_TIME)
