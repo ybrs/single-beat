@@ -10,34 +10,7 @@ import tornado.process
 import subprocess
 
 from tornado import gen
-
-
-def noop(i):
-    return i
-
-def env(identifier, default, type=noop):
-    return type(os.getenv('SINGLE_BEAT_%s' % identifier, default))
-
-class Config(object):
-    REDIS_SERVER = env('REDIS_SERVER', 'redis://localhost:6379')
-    IDENTIFIER = env('IDENTIFIER', None)
-    LOCK_TIME = env('LOCK_TIME', 5, int)
-    INITIAL_LOCK_TIME = env('INITIAL_LOCK_TIME', LOCK_TIME * 2, int)
-    HEARTBEAT_INTERVAL = env('HEARTBEAT_INTERVAL', 1, int)
-    HOST_IDENTIFIER = env('HOST_IDENTIFIER', socket.gethostname())
-    LOG_LEVEL = env('LOG_LEVEL', 'warn')
-    # wait_mode can be, supervisored or heartbeat
-    WAIT_MODE = env('WAIT_MODE', 'heartbeat')
-    WAIT_BEFORE_DIE = env('WAIT_BEFORE_DIE', 60, int)
-
-    def check(self, cond, message):
-        if not cond:
-            raise Exception(message)
-
-    def checks(self):
-        self.check(self.LOCK_TIME < self.INITIAL_LOCK_TIME, "inital lock time must be greater than lock time")
-        self.check(self.HEARTBEAT_INTERVAL < (self.LOCK_TIME / 2.0), "SINGLE_BEAT_HEARTBEAT_INTERVAL must be smaller than SINGLE_BEAT_LOCK_TIME / 2")
-        self.check(self.WAIT_MODE in ('supervised', 'heartbeat'), 'undefined wait mode')
+from config import Config
 
 config = Config()
 config.checks()
@@ -94,13 +67,6 @@ class Process(object):
     def command_stop_tail(self):
         self.log_tail = False
 
-    def command_restart(self):
-        """
-        starts the command
-        :return:
-        """
-        pass
-
     def command_start(self):
         if self.sprocess and self.sprocess.pid:
             self.state = State.RUNNING
@@ -122,11 +88,9 @@ class Process(object):
         :return:
         """
         if not (self.sprocess and self.sprocess.pid):
-            print("state - 2")
             return
 
         def exit_cb(*args, **kwargs):
-            print("process exits", args, kwargs)
             self.sprocess = None
             if self.state == State.PAUSED:
                 # if we are paused we dont want to restart it
@@ -134,10 +98,7 @@ class Process(object):
                 return
             self.state = State.WAITING
 
-        print("state - 3")
-
         self.sprocess.set_exit_callback(exit_cb)
-        print("killing - ", self.sprocess.pid)
         os.kill(self.sprocess.pid, signal.SIGTERM)
 
     def command_pid(self):
@@ -163,7 +124,7 @@ class Process(object):
         # response = tredis_client.subscribe "foobar")
         # print(response)
         tredis_client.subscribe('SB_{}'.format(config.IDENTIFIER), self.pubsub_callback)
-        logger.debug('subcribed to redis channel %s', 'SINGLE_BEAT_COMMAND_{}'.format(config.IDENTIFIER))
+        logger.debug('subcribed to redis channel %s', 'SB_{}'.format(config.IDENTIFIER))
             # print("response")
 
     def proc_exit_cb(self, exit_status):
@@ -248,6 +209,7 @@ class Process(object):
         self.ioloop.stop()
 
     def run(self):
+        rds.sadd('SINGLE_BEAT_IDENTIFIERS', self.identifier)
         self.pc = tornado.ioloop.PeriodicCallback(self.timer_cb, config.HEARTBEAT_INTERVAL * 1000)
         self.pc.start()
         self.ioloop.start()
