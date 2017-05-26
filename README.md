@@ -51,6 +51,12 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
 
     you can give redis host url, we pass it to from_url of [redis-py](http://redis-py.readthedocs.org/en/latest/#redis.StrictRedis.from_url)
 
+- SINGLE_BEAT_REDIS_SENTINEL
+
+    use redis sentinel to select the redis host to use, sentinels are defined as colon-separated list of hostname and port pairs, e.g. `192.168.1.10:26379;192.168.1.11:26379;192.168.1.12:26379`
+
+- SINGLE_BEAT_REDIS_SENTINEL_MASTER (default `mymaster`)
+- SINGLE_BEAT_REDIS_SENTINEL_DB (default 0)
 - SINGLE_BEAT_IDENTIFIER
 
     the default is we use your process name as the identifier, like
