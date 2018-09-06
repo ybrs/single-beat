@@ -2,6 +2,10 @@ Unreleased
 ==========
  - Support Redis Sentinel
 
+Version 0.3.0
+==============
+ - Add fencing
+
 Version 0.2.0
 ==============
  - Moved to tornado's ioloop, pyuv was hard to install, had breaking changes etc.
