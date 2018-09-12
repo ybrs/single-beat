@@ -104,11 +104,11 @@ class Process(object):
 
     def timer_cb_waiting(self):
         if self.acquire_lock():
-            logging.info("acquired lock, spawning child process")
+            logger.info("acquired lock, spawning child process")
             return self.spawn_process()
         # couldnt acquire lock
         if config.WAIT_MODE == 'supervised':
-            logging.debug("already running, will exit after %s seconds"
+            logger.debug("already running, will exit after %s seconds"
                           % config.WAIT_BEFORE_DIE)
             time.sleep(config.WAIT_BEFORE_DIE)
             sys.exit()
@@ -118,7 +118,7 @@ class Process(object):
 
         # read current fencing token
         redis_fence_token = rds.get("SINGLE_BEAT_{identifier}".format(identifier=self.identifier)).split(":")[0]
-        logging.debug("expected fence token: {} fence token read from Redis: {}".format(self.fence_token, redis_fence_token))
+        logger.debug("expected fence token: {} fence token read from Redis: {}".format(self.fence_token, redis_fence_token))
 
         if self.fence_token == int(redis_fence_token):
             self.fence_token += 1
@@ -126,9 +126,8 @@ class Process(object):
                 "{}:{}:{}".format(self.fence_token, config.HOST_IDENTIFIER, self.sprocess.pid),
                 ex=config.LOCK_TIME)
         else:
-            logging.error("fence token did not match (lock is held by another process), terminating")
-            logging.debug("expected fence token: {} fence token read from Redis: {}".format(self.fence_token,
-                                                                                            redis_fence_token))
+            logger.error("fence token did not match (lock is held by another process), terminating")
+
             # send sigterm to ourself and let the sigterm_handler do the rest
             os.kill(os.getpid(), signal.SIGTERM)
 
@@ -156,7 +155,7 @@ class Process(object):
         :return:
         """
         assert(self.state in ('WAITING', 'RUNNING'))
-        logging.debug("our state %s", self.state)
+        logger.debug("our state %s", self.state)
         if self.state == 'WAITING':
             return self.ioloop.stop()
 
