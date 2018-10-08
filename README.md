@@ -102,7 +102,7 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
     3) "_kombu.binding.celery"
     4) "SINGLE_BEAT_celery-beat"
     redis 127.0.0.1:6379> get SINGLE_BEAT_celery-beat
-    "aybarss-MacBook-Air.local:43213"
+    "0:aybarss-MacBook-Air.local:43213"
     redis 127.0.0.1:6379>
     ```
 
@@ -115,7 +115,7 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
     redis 127.0.0.1:6379> keys *
     1) "SINGLE_BEAT_celery-beat"
     redis 127.0.0.1:6379> get SINGLE_BEAT_celery-beat
-    "192.168.1.1:43597"
+    "0:192.168.1.1:43597"
     ```
 
 - SINGLE_BEAT_LOG_LEVEL (default warn)

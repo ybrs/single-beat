@@ -86,6 +86,7 @@ class Process(object):
         signal.signal(signal.SIGTERM, self.sigterm_handler)
         signal.signal(signal.SIGINT, self.sigterm_handler)
 
+        self.fence_token = 0
         self.sprocess = None
         self.pc = None
         self.state = 'WAITING'
@@ -103,20 +104,32 @@ class Process(object):
 
     def timer_cb_waiting(self):
         if self.acquire_lock():
+            logger.info("acquired lock, spawning child process")
             return self.spawn_process()
         # couldnt acquire lock
         if config.WAIT_MODE == 'supervised':
-            logging.debug("already running, will exit after %s seconds"
+            logger.debug("already running, will exit after %s seconds"
                           % config.WAIT_BEFORE_DIE)
             time.sleep(config.WAIT_BEFORE_DIE)
             sys.exit()
 
     def timer_cb_running(self):
         rds = config.get_redis()
-        rds.set("SINGLE_BEAT_{identifier}".format(identifier=self.identifier),
-                "{host_identifier}:{pid}".format(host_identifier=config.HOST_IDENTIFIER,
-                                                 pid=self.sprocess.pid),
+
+        # read current fencing token
+        redis_fence_token = rds.get("SINGLE_BEAT_{identifier}".format(identifier=self.identifier)).split(":")[0]
+        logger.debug("expected fence token: {} fence token read from Redis: {}".format(self.fence_token, redis_fence_token))
+
+        if self.fence_token == int(redis_fence_token):
+            self.fence_token += 1
+            rds.set("SINGLE_BEAT_{identifier}".format(identifier=self.identifier),
+                "{}:{}:{}".format(self.fence_token, config.HOST_IDENTIFIER, self.sprocess.pid),
                 ex=config.LOCK_TIME)
+        else:
+            logger.error("fence token did not match (lock is held by another process), terminating")
+
+            # send sigterm to ourself and let the sigterm_handler do the rest
+            os.kill(os.getpid(), signal.SIGTERM)
 
     def timer_cb(self):
         logger.debug("timer called %s state=%s",
@@ -127,9 +140,9 @@ class Process(object):
 
     def acquire_lock(self):
         rds = config.get_redis()
-        return rds.execute_command('SET', 'SINGLE_BEAT_%s' % self.identifier,
-                                   "%s:%s" % (config.HOST_IDENTIFIER, '0'),
-                                   'NX', 'EX', config.INITIAL_LOCK_TIME)
+        return rds.execute_command("SET", "SINGLE_BEAT_{}".format(self.identifier),
+                                   "{}:{}:{}".format(self.fence_token, config.HOST_IDENTIFIER, 0),
+                                   "NX", "EX", config.INITIAL_LOCK_TIME)
 
     def sigterm_handler(self, signum, frame):
         """ When we get term signal
@@ -142,7 +155,7 @@ class Process(object):
         :return:
         """
         assert(self.state in ('WAITING', 'RUNNING'))
-        logging.debug("our state %s", self.state)
+        logger.debug("our state %s", self.state)
         if self.state == 'WAITING':
             return self.ioloop.stop()
 
