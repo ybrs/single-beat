@@ -1,3 +1,7 @@
+Version 0.3.1
+==============
+ - Fixes python 3 compatibility issue
+
 Version 0.3.0
 ==============
  - Add fencing

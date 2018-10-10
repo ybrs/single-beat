@@ -117,7 +117,7 @@ class Process(object):
         rds = config.get_redis()
 
         # read current fencing token
-        redis_fence_token = rds.get("SINGLE_BEAT_{identifier}".format(identifier=self.identifier)).split(":")[0]
+        redis_fence_token = rds.get("SINGLE_BEAT_{identifier}".format(identifier=self.identifier)).split(b":")[0]
         logger.debug("expected fence token: {} fence token read from Redis: {}".format(self.fence_token, redis_fence_token))
 
         if self.fence_token == int(redis_fence_token):

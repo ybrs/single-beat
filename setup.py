@@ -1,9 +1,13 @@
 from setuptools import setup
 
+with open("README.md", "r") as fh:
+    long_description = fh.read()
+
 setup(
     name='single-beat',
-    version='0.3.0',
-    long_description=__doc__,
+    version='0.3.1',
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     description='ensures only one instance of your process across your servers',
     url='https://github.com/ybrs/single-beat',
     packages=['singlebeat'],
