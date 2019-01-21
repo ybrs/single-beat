@@ -116,18 +116,29 @@ class Process(object):
     def timer_cb_running(self):
         rds = config.get_redis()
 
-        # read current fencing token
-        redis_fence_token = rds.get("SINGLE_BEAT_{identifier}".format(identifier=self.identifier)).split(b":")[0]
+        # read current fence token
+        redis_fence_token = rds.get("SINGLE_BEAT_{identifier}".format(identifier=self.identifier))
+
+        if redis_fence_token:
+          redis_fence_token = int(redis_fence_token.split(b":")[0])
+        else:
+          logger.error("fence token could not be read from Redis - assuming lock expired, trying to reacquire lock")
+          if self.acquire_lock():
+            logger.info("reacquired lock")
+            redis_fence_token = self.fence_token
+          else:
+            logger.error("unable to reacquire lock, terminating")
+            os.kill(os.getpid(), signal.SIGTERM)
+
         logger.debug("expected fence token: {} fence token read from Redis: {}".format(self.fence_token, redis_fence_token))
 
-        if self.fence_token == int(redis_fence_token):
+        if self.fence_token == redis_fence_token:
             self.fence_token += 1
             rds.set("SINGLE_BEAT_{identifier}".format(identifier=self.identifier),
                 "{}:{}:{}".format(self.fence_token, config.HOST_IDENTIFIER, self.sprocess.pid),
                 ex=config.LOCK_TIME)
         else:
-            logger.error("fence token did not match (lock is held by another process), terminating")
-
+            logger.error("fence token did not match - lock is held by another process, terminating")
             # send sigterm to ourself and let the sigterm_handler do the rest
             os.kill(os.getpid(), signal.SIGTERM)
 

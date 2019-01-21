@@ -1,3 +1,7 @@
+Version 0.3.2
+==============
+ - Try to reacquire Redis lock when it expired
+
 Version 0.3.1
 ==============
  - Fixes python 3 compatibility issue
