@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import time
@@ -9,12 +10,17 @@ import signal
 import tornado.ioloop
 import tornado.process
 import subprocess
+from tornadis import PubSubClient
+from tornado import gen
+
 
 def noop(i):
     return i
 
+
 def env(identifier, default, type=noop):
     return type(os.getenv('SINGLE_BEAT_%s' % identifier, default))
+
 
 class Config(object):
     REDIS_SERVER = env('REDIS_SERVER', 'redis://localhost:6379')
@@ -30,6 +36,7 @@ class Config(object):
     # wait_mode can be, supervisored or heartbeat
     WAIT_MODE = env('WAIT_MODE', 'heartbeat')
     WAIT_BEFORE_DIE = env('WAIT_BEFORE_DIE', 60, int)
+    _host_identifier = None
 
     def check(self, cond, message):
         if not cond:
@@ -50,6 +57,19 @@ class Config(object):
                                        redis_class=redis.Redis)
         return self._redis
 
+    def rewrite_redis_url(self):
+        """\
+        if REDIS_SERVER is just an ip address, then we try to translate it to
+        redis_url, redis://REDIS_SERVER so that it doesn't try to connect to
+        localhost while you try to connect to another server
+        :return:
+        """
+        if self.REDIS_SERVER.startswith('unix://') or \
+                self.REDIS_SERVER.startswith('redis://') or \
+                self.REDIS_SERVER.startswith('rediss://'):
+            return self.REDIS_SERVER
+        return 'redis://{}/'.format(self.REDIS_SERVER)
+
     def __init__(self):
         if self.REDIS_SENTINEL:
             sentinels = [tuple(s.split(':')) for s in self.REDIS_SENTINEL.split(';')]
@@ -57,7 +77,28 @@ class Config(object):
                                                      db=self.REDIS_SENTINEL_DB,
                                                      socket_timeout=0.1)
         else:
-            self._redis = redis.Redis.from_url(self.REDIS_SERVER)
+            self._redis = redis.Redis.from_url(self.rewrite_redis_url())
+
+    def get_async_redis_client(self):
+        conn = self.get_redis().connection_pool\
+            .get_connection('ping')
+        host, port, password = conn.host, conn.port, conn.password
+        client = PubSubClient(host=host, port=port, password=password, autoconnect=True)
+        return client
+
+    def get_host_identifier(self):
+        """\
+        we try to return IPADDR:PID form to identify where any singlebeat instance is
+        running.
+
+        :return:
+        """
+        if self._host_identifier:
+            return self._host_identifier
+        local_ip_addr = self.get_redis().connection_pool\
+            .get_connection('ping')._sock.getsockname()[0]
+        self._host_identifier = '{}:{}'.format(local_ip_addr, os.getpid())
+        return self._host_identifier
 
 config = Config()
 config.checks()
@@ -86,11 +127,13 @@ class Process(object):
         signal.signal(signal.SIGTERM, self.sigterm_handler)
         signal.signal(signal.SIGINT, self.sigterm_handler)
 
+        self.async_redis = config.get_async_redis_client()
         self.fence_token = 0
         self.sprocess = None
         self.pc = None
         self.state = 'WAITING'
         self.ioloop = tornado.ioloop.IOLoop.instance()
+        self.ioloop.spawn_callback(self.wait_for_commands)
 
     def proc_exit_cb(self, exit_status):
         """When child exits we use the same exit status code"""
@@ -115,28 +158,27 @@ class Process(object):
 
     def timer_cb_running(self):
         rds = config.get_redis()
-
         # read current fence token
         redis_fence_token = rds.get("SINGLE_BEAT_{identifier}".format(identifier=self.identifier))
 
         if redis_fence_token:
-          redis_fence_token = int(redis_fence_token.split(b":")[0])
+            redis_fence_token = int(redis_fence_token.split(b":")[0])
         else:
-          logger.error("fence token could not be read from Redis - assuming lock expired, trying to reacquire lock")
-          if self.acquire_lock():
-            logger.info("reacquired lock")
-            redis_fence_token = self.fence_token
-          else:
-            logger.error("unable to reacquire lock, terminating")
-            os.kill(os.getpid(), signal.SIGTERM)
+            logger.error("fence token could not be read from Redis - assuming lock expired, trying to reacquire lock")
+            if self.acquire_lock():
+                logger.info("reacquired lock")
+                redis_fence_token = self.fence_token
+            else:
+                logger.error("unable to reacquire lock, terminating")
+                os.kill(os.getpid(), signal.SIGTERM)
 
         logger.debug("expected fence token: {} fence token read from Redis: {}".format(self.fence_token, redis_fence_token))
 
         if self.fence_token == redis_fence_token:
             self.fence_token += 1
             rds.set("SINGLE_BEAT_{identifier}".format(identifier=self.identifier),
-                "{}:{}:{}".format(self.fence_token, config.HOST_IDENTIFIER, self.sprocess.pid),
-                ex=config.LOCK_TIME)
+                    "{}:{}:{}".format(self.fence_token, config.HOST_IDENTIFIER, self.sprocess.pid),
+                    ex=config.LOCK_TIME)
         else:
             logger.error("fence token did not match - lock is held by another process, terminating")
             # send sigterm to ourself and let the sigterm_handler do the rest
@@ -187,21 +229,67 @@ class Process(object):
         env = os.environ
 
         self.state = "RUNNING"
+        try:
+            self.sprocess = tornado.process.Subprocess(cmd,
+                        env=env,
+                        stdin=subprocess.PIPE,
+                        stdout=STREAM,
+                        stderr=STREAM
+                       )
+        except FileNotFoundError:
+            """
+            if the file that we need to run doesn't exists
+            we immediately exit.
+            """
+            logger.exception("file not found")
+            return self.proc_exit_cb(1)
 
-        self.sprocess = tornado.process.Subprocess(cmd,
-                    env=env,
-                    stdin=subprocess.PIPE,
-                    stdout=STREAM,
-                    stderr=STREAM
-                   )
         self.sprocess.set_exit_callback(self.proc_exit_cb)
 
         self.sprocess.stdout.read_until_close(streaming_callback=self.stdout_read_cb)
         self.sprocess.stderr.read_until_close(streaming_callback=self.stderr_read_cb)
 
+    def cli_command_who(self, msg):
+        rds = config.get_redis()
+        logger.info("reply to %s", msg['reply_channel'])
+        rds.publish(msg['reply_channel'], json.dumps({
+            'identifier': config.get_host_identifier(),
+            'state': self.state
+        }))
+
+    def pubsub_callback(self, msg):
+        logger.info("got command - %s", msg)
+
+        if msg[0] != b'message':
+            return
+
+        logger.info("got command 2- %s", msg[2])
+
+        try:
+            cmd = json.loads(msg[2])
+        except:
+            logger.exception("exception on command")
+            return
+
+        fn = getattr(self, 'cli_command_{}'.format(cmd['cmd']), None)
+        if fn:
+            logger.info("got command - %s running %s", msg[2], fn)
+            fn(cmd)
+
+    @gen.coroutine
+    def wait_for_commands(self):
+        logger.info('subscribed to %s', 'SB_{}'.format(self.identifier))
+        yield self.async_redis.pubsub_subscribe('SB_{}'.format(self.identifier))
+        logger.debug('subcribed to redis channel %s', 'SB_{}'.format(self.identifier))
+        while True:
+            msg = yield self.async_redis.pubsub_pop_message()
+            self.pubsub_callback(msg)
+
+
 def run_process():
     process = Process(sys.argv[1:])
     process.run()
+
 
 if __name__ == "__main__":
     run_process()
