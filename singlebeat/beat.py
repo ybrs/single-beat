@@ -116,6 +116,13 @@ def get_process_identifier(args):
     return '_'.join(args)
 
 
+class State(object):
+    PAUSED = 'PAUSED'
+    RUNNING = 'RUNNING'
+    WAITING = 'WAITING'
+    RESTARTING = 'RESTARTING'
+
+
 class Process(object):
     def __init__(self, args):
         self.args = args
@@ -139,11 +146,37 @@ class Process(object):
         """When child exits we use the same exit status code"""
         sys.exit(exit_status)
 
+    def proc_exit_cb_noop(self, exit_status):
+        """\
+        when we deliberately restart/stop the child process,
+        we don't want to exit ourselves, so we replace proc_exit_cb
+        with a noop one
+        :param exit_status:
+        :return:
+        """
+
+    def proc_exit_cb_restart(self, exit_status):
+        """\
+        this is used when we restart the process,
+        it re-triggers the start
+        """
+        self.spawn_process()
+
+    def proc_exit_cb_state_set(self, exit_status):
+        print("self.state", self.state)
+        if self.state == State.PAUSED:
+            self.state = State.WAITING
+            print("now state is", self.state)
+            self.sprocess.set_exit_callback(self.proc_exit_cb)
+
     def stdout_read_cb(self, data):
         sys.stdout.write(data.decode())
 
     def stderr_read_cb(self, data):
         sys.stdout.write(data.decode())
+
+    def timer_cb_paused(self):
+        pass
 
     def timer_cb_waiting(self):
         if self.acquire_lock():
@@ -155,6 +188,17 @@ class Process(object):
                           % config.WAIT_BEFORE_DIE)
             time.sleep(config.WAIT_BEFORE_DIE)
             sys.exit()
+
+    def process_pid(self):
+        """\
+        when we are restarting, we want to keep sending heart beat, so any other single-beat
+        node will not pick it up.
+        hence we need a process-id as an identifier - even for a short period of time.
+        :return:
+        """
+        if self.sprocess:
+            return self.sprocess.pid
+        return -1
 
     def timer_cb_running(self):
         rds = config.get_redis()
@@ -177,12 +221,20 @@ class Process(object):
         if self.fence_token == redis_fence_token:
             self.fence_token += 1
             rds.set("SINGLE_BEAT_{identifier}".format(identifier=self.identifier),
-                    "{}:{}:{}".format(self.fence_token, config.HOST_IDENTIFIER, self.sprocess.pid),
+                    "{}:{}:{}".format(self.fence_token, config.HOST_IDENTIFIER, self.process_pid()),
                     ex=config.LOCK_TIME)
         else:
             logger.error("fence token did not match - lock is held by another process, terminating")
             # send sigterm to ourself and let the sigterm_handler do the rest
             os.kill(os.getpid(), signal.SIGTERM)
+
+    def timer_cb_restarting(self):
+        """\
+        when restarting we are doing exactly the same as running - we don't want any other
+        single-beat node to pick up
+        :return:
+        """
+        self.timer_cb_running()
 
     def timer_cb(self):
         logger.debug("timer called %s state=%s",
@@ -207,7 +259,7 @@ class Process(object):
         :param frame:
         :return:
         """
-        assert(self.state in ('WAITING', 'RUNNING'))
+        assert(self.state in ('WAITING', 'RUNNING', 'PAUSED'))
         logger.debug("our state %s", self.state)
         if self.state == 'WAITING':
             return self.ioloop.stop()
@@ -228,7 +280,7 @@ class Process(object):
         cmd = sys.argv[1:]
         env = os.environ
 
-        self.state = "RUNNING"
+        self.state = State.RUNNING
         try:
             self.sprocess = tornado.process.Subprocess(cmd,
                         env=env,
@@ -252,9 +304,119 @@ class Process(object):
     def cli_command_who(self, msg):
         rds = config.get_redis()
         logger.info("reply to %s", msg['reply_channel'])
+        if self.sprocess:
+            try:
+                os.kill(self.sprocess.pid, 0)
+                info = 'pid: {}'.format(self.sprocess.pid)
+            except:
+                info = ''
+        else:
+            info = ''
+
         rds.publish(msg['reply_channel'], json.dumps({
             'identifier': config.get_host_identifier(),
-            'state': self.state
+            'state': self.state,
+            'info': info
+        }))
+
+    def cli_command_quit(self, msg):
+        if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
+            self.sprocess.proc.kill()
+        else:
+            sys.exit(0)
+
+    def cli_command_pause(self, msg):
+        """\
+        if we have a running child we kill it and set our state to paused
+        if we don't have a running child, we set our state to paused
+        this will pause all the nodes in single-beat cluster
+
+        its useful when you deploy some code and don't want your child to spawn
+        randomly
+
+        :param msg:
+        :return:
+        """
+        info = ''
+        if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
+            self.sprocess.set_exit_callback(self.proc_exit_cb_noop)
+            self.sprocess.proc.kill()
+            info = 'killed'
+            # TODO: check if process is really dead etc.
+        self.state = State.PAUSED
+
+        rds = config.get_redis()
+        logger.info("reply to %s", msg['reply_channel'])
+        rds.publish(msg['reply_channel'], json.dumps({
+            'identifier': config.get_host_identifier(),
+            'state': self.state,
+            'info': ''
+        }))
+
+    def cli_command_resume(self, msg):
+        """\
+        sets state to waiting - so we resume spawning children
+        """
+        if self.state == State.PAUSED:
+            self.state = State.WAITING
+        
+        rds = config.get_redis()
+        logger.info("reply to %s", msg['reply_channel'])
+        rds.publish(msg['reply_channel'], json.dumps({
+            'identifier': config.get_host_identifier(),
+            'state': self.state,
+            'info': ''
+        }))
+
+    def cli_command_stop(self, msg):
+        """\
+        stops the running child process - if its running
+        it will re-spawn in any single-beat node after sometime
+
+        :param msg:
+        :return:
+        """
+        info = ''
+        if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
+            self.state = State.PAUSED
+            self.sprocess.set_exit_callback(self.proc_exit_cb_state_set)
+            self.sprocess.proc.kill()
+            info = 'killed'
+            # TODO: check if process is really dead etc.
+
+        rds = config.get_redis()
+        logger.info("reply to %s", msg['reply_channel'])
+        rds.publish(msg['reply_channel'], json.dumps({
+            'identifier': config.get_host_identifier(),
+            'state': self.state,
+            'info': info
+        }))
+
+    def cli_command_restart(self, msg):
+        """\
+        restart the subprocess
+        i. we set our state to RESTARTING - on restarting we still send heartbeat
+        ii. we kill the subprocess
+        iii. we start again
+        iv. if its started we set our state to RUNNING, else we set it to WAITING
+
+        :param msg:
+        :return:
+        """
+        info = ''
+        if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
+            self.state = State.RESTARTING
+            self.sprocess.set_exit_callback(self.proc_exit_cb_restart)
+            self.sprocess.proc.kill()
+            info = 'killed'
+            # TODO: check if process is really dead etc.
+
+        rds = config.get_redis()
+        logger.info("reply to %s", msg['reply_channel'])
+        rds.publish(msg['reply_channel'], json.dumps({
+            'identifier': config.get_host_identifier(),
+            'state': self.state,
+            'info': info
         }))
 
     def pubsub_callback(self, msg):

@@ -15,7 +15,8 @@ setup(
     install_requires=[
         'tornado>=4.2.1',
         'redis >= 2.9.1',
-        'toredis>=0.1.2'
+        'tornadis>=0.8.1',
+        'Click>=7.0'
     ],
     test_require=[
         'psutil>=5.2.2'
