@@ -11,12 +11,7 @@ reply_channel = 'SINGLE_BEAT_REPLY_{}'.format(uuid.uuid4())
 class Commander(object):
 
     def cmd_info(self):
-        cmd = json.dumps({
-            'cmd': 'who',
-            'reply_channel': reply_channel
-        })
-        rds = config.get_redis()
-        rds.publish('SB_{}'.format(config.IDENTIFIER), cmd)
+        return 'info', []
 
     def cmd_quit(self):
         """\
@@ -24,64 +19,33 @@ class Commander(object):
         useful to terminate all single-beat instances in one go
         :return:
         """
-        cmd = json.dumps({
-            'cmd': 'quit',
-            'reply_channel': reply_channel
-        })
-        rds = config.get_redis()
-        rds.publish('SB_{}'.format(config.IDENTIFIER), cmd)
+        return 'quit', []
 
     def cmd_pause(self):
         """\
         it will kill the child and pause all nodes
         """
-        cmd = json.dumps({
-            'cmd': 'pause',
-            'reply_channel': reply_channel
-        })
-        rds = config.get_redis()
-        rds.publish('SB_{}'.format(config.IDENTIFIER), cmd)
+        return 'pause', []
 
     def cmd_resume(self):
         """\
         will resume all nodes - set them to waiting state
         """
-        cmd = json.dumps({
-            'cmd': 'resume',
-            'reply_channel': reply_channel
-        })
-        rds = config.get_redis()
-        rds.publish('SB_{}'.format(config.IDENTIFIER), cmd)
-
+        return 'resume', []
 
     def cmd_restart(self):
         """\
         it will restart the child process - in the same node
         useful for when deploying new code
         """
-        cmd = json.dumps({
-            'cmd': 'restart',
-            'reply_channel': reply_channel
-        })
-        rds = config.get_redis()
-        rds.publish('SB_{}'.format(config.IDENTIFIER), cmd)
+        return 'restart', []
 
     def cmd_stop(self):
         """\
         it will stop the child process, then any single-beat node will pick it up
         and restart
         """
-        cmd = json.dumps({
-            'cmd': 'stop',
-            'reply_channel': reply_channel
-        })
-        rds = config.get_redis()
-        rds.publish('SB_{}'.format(config.IDENTIFIER), cmd)
-
-    def cmd_self_quit(self):
-        rds = config.get_redis()
-        print("quit now !", 'SB_{}'.format(config.IDENTIFIER))
-        rds.publish(reply_channel, 'quit')
+        return 'stop', []
 
 
 def submit_to_replies():
@@ -112,7 +76,15 @@ def main(cmd='info'):
     thread = threading.Thread(target=submit_to_replies)
     thread.start()
     time.sleep(0.100)
-    fn()
+    #
+    cmd_name, args = fn()
+    cmd = json.dumps({
+        'cmd': cmd_name,
+        'args': args,
+        'reply_channel': reply_channel
+    })
+    rds = config.get_redis()
+    rds.publish('SB_{}'.format(config.IDENTIFIER), cmd)
 
 
 if __name__ == '__main__':

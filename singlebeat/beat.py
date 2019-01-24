@@ -100,6 +100,7 @@ class Config(object):
         self._host_identifier = '{}:{}'.format(local_ip_addr, os.getpid())
         return self._host_identifier
 
+
 config = Config()
 config.checks()
 
@@ -121,6 +122,14 @@ class State(object):
     RUNNING = 'RUNNING'
     WAITING = 'WAITING'
     RESTARTING = 'RESTARTING'
+
+
+def is_process_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except:
+        return False
 
 
 class Process(object):
@@ -150,7 +159,7 @@ class Process(object):
         """\
         when we deliberately restart/stop the child process,
         we don't want to exit ourselves, so we replace proc_exit_cb
-        with a noop one
+        with a noop one when restarting
         :param exit_status:
         :return:
         """
@@ -163,10 +172,8 @@ class Process(object):
         self.spawn_process()
 
     def proc_exit_cb_state_set(self, exit_status):
-        print("self.state", self.state)
         if self.state == State.PAUSED:
             self.state = State.WAITING
-            print("now state is", self.state)
             self.sprocess.set_exit_callback(self.proc_exit_cb)
 
     def stdout_read_cb(self, data):
@@ -297,29 +304,21 @@ class Process(object):
             return self.proc_exit_cb(1)
 
         self.sprocess.set_exit_callback(self.proc_exit_cb)
-
+        #
         self.sprocess.stdout.read_until_close(streaming_callback=self.stdout_read_cb)
         self.sprocess.stderr.read_until_close(streaming_callback=self.stderr_read_cb)
 
-    def cli_command_who(self, msg):
-        rds = config.get_redis()
-        logger.info("reply to %s", msg['reply_channel'])
+    def cli_command_info(self, msg):
+        info = ''
         if self.sprocess:
-            try:
-                os.kill(self.sprocess.pid, 0)
+            if is_process_alive(self.sprocess.pid):
                 info = 'pid: {}'.format(self.sprocess.pid)
-            except:
-                info = ''
-        else:
-            info = ''
-
-        rds.publish(msg['reply_channel'], json.dumps({
-            'identifier': config.get_host_identifier(),
-            'state': self.state,
-            'info': info
-        }))
+        return info
 
     def cli_command_quit(self, msg):
+        """\
+        kills the child and exits
+        """
         if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
             self.sprocess.proc.kill()
         else:
@@ -344,14 +343,7 @@ class Process(object):
             info = 'killed'
             # TODO: check if process is really dead etc.
         self.state = State.PAUSED
-
-        rds = config.get_redis()
-        logger.info("reply to %s", msg['reply_channel'])
-        rds.publish(msg['reply_channel'], json.dumps({
-            'identifier': config.get_host_identifier(),
-            'state': self.state,
-            'info': ''
-        }))
+        return info
 
     def cli_command_resume(self, msg):
         """\
@@ -359,14 +351,6 @@ class Process(object):
         """
         if self.state == State.PAUSED:
             self.state = State.WAITING
-        
-        rds = config.get_redis()
-        logger.info("reply to %s", msg['reply_channel'])
-        rds.publish(msg['reply_channel'], json.dumps({
-            'identifier': config.get_host_identifier(),
-            'state': self.state,
-            'info': ''
-        }))
 
     def cli_command_stop(self, msg):
         """\
@@ -383,14 +367,7 @@ class Process(object):
             self.sprocess.proc.kill()
             info = 'killed'
             # TODO: check if process is really dead etc.
-
-        rds = config.get_redis()
-        logger.info("reply to %s", msg['reply_channel'])
-        rds.publish(msg['reply_channel'], json.dumps({
-            'identifier': config.get_host_identifier(),
-            'state': self.state,
-            'info': info
-        }))
+        return info
 
     def cli_command_restart(self, msg):
         """\
@@ -410,14 +387,7 @@ class Process(object):
             self.sprocess.proc.kill()
             info = 'killed'
             # TODO: check if process is really dead etc.
-
-        rds = config.get_redis()
-        logger.info("reply to %s", msg['reply_channel'])
-        rds.publish(msg['reply_channel'], json.dumps({
-            'identifier': config.get_host_identifier(),
-            'state': self.state,
-            'info': info
-        }))
+        return info
 
     def pubsub_callback(self, msg):
         logger.info("got command - %s", msg)
@@ -425,18 +395,26 @@ class Process(object):
         if msg[0] != b'message':
             return
 
-        logger.info("got command 2- %s", msg[2])
-
         try:
             cmd = json.loads(msg[2])
         except:
-            logger.exception("exception on command")
+            logger.exception("exception on parsing command %s", msg)
             return
 
         fn = getattr(self, 'cli_command_{}'.format(cmd['cmd']), None)
-        if fn:
-            logger.info("got command - %s running %s", msg[2], fn)
-            fn(cmd)
+        if not fn:
+            logger.info('cli_command_{} not found'.format(cmd['cmd']))
+            return
+
+        logger.info("got command - %s running %s", msg[2], fn)
+        info = fn(cmd)
+        rds = config.get_redis()
+        logger.info("reply to %s", cmd['reply_channel'])
+        rds.publish(cmd['reply_channel'], json.dumps({
+            'identifier': config.get_host_identifier(),
+            'state': self.state,
+            'info': info or ''
+        }))
 
     @gen.coroutine
     def wait_for_commands(self):
