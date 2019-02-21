@@ -65,14 +65,36 @@ def submit_to_replies():
         print("{} | {} | {}".format(data['identifier'], data['state'], data.get('info', '') ))
         cnt = cnt - 1
 
+help_text = """
+info: 
+    Show information about which nodes are holding the running application
+
+quit:
+    kills the child - if running - and then single-beat itself exits
+useful to terminate all single-beat instances in one go
+
+pause:
+    it will kill the child and pause all nodes. Might be useful to deploy new code.
+
+resume:
+    will start all nodes, and put them in waiting state - one of them will pick the application
+
+restart:
+    it will restart the child process - in the same node useful for when deploying new code
+    
+stop:
+    it will kill the child process so any node will pick it up and start.
+"""
 
 @click.command()
-@click.argument('cmd')
+@click.argument('cmd', required=False)
 def main(cmd='info'):
     commander = Commander()
     fn = getattr(commander, 'cmd_{}'.format(cmd), None)
     if not fn:
-        raise Exception('unknown command')
+        print('unknown command, available commands are')
+        print(help_text)
+        return
     thread = threading.Thread(target=submit_to_replies)
     thread.start()
     time.sleep(0.100)
