@@ -167,6 +167,106 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
 
     it will try to spawn celerybeat every 60 seconds.
 
+Cli
+-------------
+Single-beat also has a simple cli, that gives info about where your process is living - also can pause single-beat, restart your process etc.
+
+"info" will show where the process is running, the first node identifier is the ip address connecting to redis - by default.
+
+```
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli info
+127.0.0.1:95779 | WAITING |
+127.0.0.1:95776 | RUNNING | pid: 95778
+127.0.0.1:95784 | WAITING |
+```
+
+
+"stop", will stop your child process, so any node will pick it up again
+
+```
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli stop
+127.0.0.1:95776 | PAUSED | killed
+127.0.0.1:95779 | WAITING |
+127.0.0.1:95784 | WAITING |
+
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli info
+127.0.0.1:95776 | WAITING |
+127.0.0.1:95779 | WAITING |
+127.0.0.1:95784 | RUNNING | pid: 95877
+```
+
+"restart" will restart the child process in the active node.
+
+```
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli info
+127.0.0.1:95776 | WAITING |
+127.0.0.1:95779 | WAITING |
+127.0.0.1:95784 | RUNNING | pid: 95877
+
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli restart
+127.0.0.1:95776 | WAITING |
+127.0.0.1:95779 | WAITING |
+127.0.0.1:95784 | RESTARTING | killed
+
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli info
+127.0.0.1:95776 | WAITING |
+127.0.0.1:95779 | WAITING |
+127.0.0.1:95784 | RUNNING | pid: 95905
+```
+
+
+"pause" will kill the child, and put all single-beat nodes in pause state. This is useful for when deploying, to ensure that no "old version of the code"
+is running while the deploy process is in place. after the deploy you can "resume" so any node will pick the child.
+
+```
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli info
+127.0.0.1:95776 | WAITING |
+127.0.0.1:95779 | WAITING |
+127.0.0.1:95784 | RUNNING | pid: 95905
+
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli pause
+127.0.0.1:95776 | PAUSED |
+127.0.0.1:95779 | PAUSED |
+127.0.0.1:95784 | PAUSED | killed
+
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli info
+127.0.0.1:95776 | PAUSED |
+127.0.0.1:95779 | PAUSED |
+127.0.0.1:95784 | PAUSED |
+```
+
+"resume" will put single-beat nodes in waiting state - so any node will pick up the child
+
+```
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli info
+127.0.0.1:95776 | PAUSED |
+127.0.0.1:95779 | PAUSED |
+127.0.0.1:95784 | PAUSED |
+
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli resume
+127.0.0.1:95776 | WAITING |
+127.0.0.1:95784 | WAITING |
+127.0.0.1:95779 | WAITING |
+
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli info
+127.0.0.1:95776 | WAITING |
+127.0.0.1:95784 | WAITING |
+127.0.0.1:95779 | RUNNING | pid: 96025
+```
+
+
+"quit" will terminate all child processes and then the parent process itself. So there will be no live single-beat nodes. Its useful to
+have some sort of hand-brake - also might be useful when you have blue/green, or canary style deployments.
+
+```
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli quit
+127.0.0.1:95784 | RUNNING |
+
+(venv3) $
+(venv3) $ SINGLE_BEAT_IDENTIFIER=echo SINGLE_BEAT_LOG_LEVEL=critical SINGLE_BEAT_REDIS_SERVER=127.0.0.1 single-beat-cli info
+```
+
+
 Usage Patterns
 --------------
 

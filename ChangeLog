@@ -1,3 +1,7 @@
+Version 0.4.1
+==============
+ - Added a simple cli to remotely control single-beat instances
+
 Version 0.3.2
 ==============
  - Try to reacquire Redis lock when it expired
