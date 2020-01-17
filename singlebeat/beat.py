@@ -33,7 +33,7 @@ class Config(object):
     HEARTBEAT_INTERVAL = env('HEARTBEAT_INTERVAL', 1, int)
     HOST_IDENTIFIER = env('HOST_IDENTIFIER', socket.gethostname())
     LOG_LEVEL = env('LOG_LEVEL', 'warn')
-    # wait_mode can be, supervisored or heartbeat
+    # wait_mode can be, supervisord or heartbeat
     WAIT_MODE = env('WAIT_MODE', 'heartbeat')
     WAIT_BEFORE_DIE = env('WAIT_BEFORE_DIE', 60, int)
     _host_identifier = None
@@ -43,7 +43,7 @@ class Config(object):
             raise Exception(message)
 
     def checks(self):
-        self.check(self.LOCK_TIME < self.INITIAL_LOCK_TIME, "inital lock time must be greater than lock time")
+        self.check(self.LOCK_TIME < self.INITIAL_LOCK_TIME, "initial lock time must be greater than lock time")
         self.check(self.HEARTBEAT_INTERVAL < (self.LOCK_TIME / 2.0), "SINGLE_BEAT_HEARTBEAT_INTERVAL must be smaller than SINGLE_BEAT_LOCK_TIME / 2")
         self.check(self.WAIT_MODE in ('supervised', 'heartbeat'), 'undefined wait mode')
         if self.REDIS_SENTINEL:
@@ -189,7 +189,7 @@ class Process(object):
         if self.acquire_lock():
             logger.info("acquired lock, spawning child process")
             return self.spawn_process()
-        # couldnt acquire lock
+        # couldn't acquire lock
         if config.WAIT_MODE == 'supervised':
             logger.debug("already running, will exit after %s seconds"
                           % config.WAIT_BEFORE_DIE)
@@ -420,7 +420,7 @@ class Process(object):
     def wait_for_commands(self):
         logger.info('subscribed to %s', 'SB_{}'.format(self.identifier))
         yield self.async_redis.pubsub_subscribe('SB_{}'.format(self.identifier))
-        logger.debug('subcribed to redis channel %s', 'SB_{}'.format(self.identifier))
+        logger.debug('subscribed to redis channel %s', 'SB_{}'.format(self.identifier))
         while True:
             msg = yield self.async_redis.pubsub_pop_message()
             self.pubsub_callback(msg)
