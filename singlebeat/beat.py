@@ -178,9 +178,11 @@ class Process(object):
 
     def stdout_read_cb(self, data):
         sys.stdout.write(data.decode())
+        sys.stdout.flush()
 
     def stderr_read_cb(self, data):
         sys.stderr.write(data.decode())
+        sys.stderr.flush()
 
     def timer_cb_paused(self):
         pass
