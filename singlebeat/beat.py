@@ -284,7 +284,7 @@ class Process(object):
 
     def spawn_process(self):
         STREAM = tornado.process.Subprocess.STREAM
-        cmd = sys.argv[1:]
+        cmd = self.args
         env = os.environ
 
         self.state = State.RUNNING
