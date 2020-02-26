@@ -180,7 +180,7 @@ class Process(object):
         sys.stdout.write(data.decode())
 
     def stderr_read_cb(self, data):
-        sys.stdout.write(data.decode())
+        sys.stderr.write(data.decode())
 
     def timer_cb_paused(self):
         pass
