@@ -57,6 +57,7 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
 
 - SINGLE_BEAT_REDIS_SENTINEL_MASTER (default `mymaster`)
 - SINGLE_BEAT_REDIS_SENTINEL_DB (default 0)
+- SINGLE_BEAT_REDIS_SENTINEL_PASSWORD
 - SINGLE_BEAT_IDENTIFIER
 
     the default is we use your process name as the identifier, like
