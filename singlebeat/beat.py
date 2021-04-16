@@ -55,6 +55,7 @@ class Config(object):
     def get_redis(self):
         if self.REDIS_SENTINEL:
             return self._sentinel.master_for(self.REDIS_SENTINEL_MASTER,
+                                       password=self.REDIS_SENTINEL_PASSWORD,
                                        redis_class=redis.Redis)
         return self._redis
 
@@ -76,7 +77,6 @@ class Config(object):
             sentinels = [tuple(s.split(':')) for s in self.REDIS_SENTINEL.split(';')]
             self._sentinel = redis.sentinel.Sentinel(sentinels,
                                                      db=self.REDIS_SENTINEL_DB,
-                                                     password=self.REDIS_SENTINEL_PASSWORD,
                                                      socket_timeout=0.1)
         else:
             self._redis = redis.Redis.from_url(self.rewrite_redis_url())
