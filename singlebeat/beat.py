@@ -1,24 +1,23 @@
+import argparse
+from distutils.util import strtobool
 import json
+import logging
 import os
+import signal
+import socket
+import subprocess
 import sys
 import time
-import socket
+
 import redis
 from redis.sentinel import Sentinel
-import logging
-import signal
 import tornado.ioloop
 import tornado.process
-import subprocess
 from tornadis import PubSubClient
 from tornado import gen
 
 
-def noop(i):
-    return i
-
-
-def env(identifier, default, type=noop):
+def env(identifier, default, type=lambda v: v):
     return type(os.getenv('SINGLE_BEAT_%s' % identifier, default))
 
 
@@ -36,6 +35,7 @@ class Config(object):
     # wait_mode can be, supervisord or heartbeat
     WAIT_MODE = env('WAIT_MODE', 'heartbeat')
     WAIT_BEFORE_DIE = env('WAIT_BEFORE_DIE', 60, int)
+    START_PAUSED = env('START_PAUSED', 'false', strtobool)
     _host_identifier = None
 
     def check(self, cond, message):
@@ -133,12 +133,12 @@ def is_process_alive(pid):
 
 
 class Process(object):
-    def __init__(self, args):
-        self.args = args
+    def __init__(self, command, args):
+        self.command = command
         self.state = None
         self.t1 = time.time()
 
-        self.identifier = config.IDENTIFIER or get_process_identifier(self.args[1:])
+        self.identifier = config.IDENTIFIER or get_process_identifier(self.command[1:])
 
         signal.signal(signal.SIGTERM, self.sigterm_handler)
         signal.signal(signal.SIGINT, self.sigterm_handler)
@@ -147,7 +147,12 @@ class Process(object):
         self.fence_token = 0
         self.sprocess = None
         self.pc = None
-        self.state = 'WAITING'
+
+        if args.singlebeat_start_paused or config.START_PAUSED:
+            self.state = State.PAUSED
+        else:
+            self.state = State.WAITING
+
         self.ioloop = tornado.ioloop.IOLoop.instance()
         self.ioloop.spawn_callback(self.wait_for_commands)
 
@@ -284,13 +289,11 @@ class Process(object):
 
     def spawn_process(self):
         STREAM = tornado.process.Subprocess.STREAM
-        cmd = self.args
-        env = os.environ
 
         self.state = State.RUNNING
         try:
-            self.sprocess = tornado.process.Subprocess(cmd,
-                        env=env,
+            self.sprocess = tornado.process.Subprocess(self.command,
+                        env=os.environ,
                         stdin=subprocess.PIPE,
                         stdout=STREAM,
                         stderr=STREAM
@@ -425,9 +428,16 @@ class Process(object):
             msg = yield self.async_redis.pubsub_pop_message()
             self.pubsub_callback(msg)
 
-
 def run_process():
-    process = Process(sys.argv[1:])
+    parser = argparse.ArgumentParser(prog='single-beat', allow_abbrev=False, usage='%(prog)s [--singlebeat-start-paused] celerybeat_command')
+    parser.add_argument('--singlebeat-start-paused', action='store_true', help='Start singlebeat in paused state')
+    args, command = parser.parse_known_args(sys.argv[1:])
+
+    if not command:
+        parser.print_help()
+        sys.exit(1)
+
+    process = Process(command, args)
     process.run()
 
 
