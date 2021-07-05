@@ -13,7 +13,7 @@ import redis
 from redis.sentinel import Sentinel
 import tornado.ioloop
 import tornado.process
-from tornadis import PubSubClient
+from tornadis import PubSubClient, ConnectionError
 from tornado import gen
 
 
@@ -30,6 +30,7 @@ class Config(object):
     LOCK_TIME = env('LOCK_TIME', 5, int)
     INITIAL_LOCK_TIME = env('INITIAL_LOCK_TIME', LOCK_TIME * 2, int)
     HEARTBEAT_INTERVAL = env('HEARTBEAT_INTERVAL', 1, int)
+    PUBSUB_RECONNECT_DELAY = env('PUBSUB_RECONNECT_DELAY', 0.5, float)
     HOST_IDENTIFIER = env('HOST_IDENTIFIER', socket.gethostname())
     LOG_LEVEL = env('LOG_LEVEL', 'warn')
     # wait_mode can be, supervisord or heartbeat
@@ -105,7 +106,7 @@ config = Config()
 config.checks()
 
 numeric_log_level = getattr(logging, config.LOG_LEVEL.upper(), None)
-logging.basicConfig(level=numeric_log_level)
+logging.basicConfig(level=numeric_log_level, format='[%(asctime)s] [%(process)d] [%(levelname)s]: %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -422,11 +423,23 @@ class Process(object):
     @gen.coroutine
     def wait_for_commands(self):
         logger.info('subscribed to %s', 'SB_{}'.format(self.identifier))
-        yield self.async_redis.pubsub_subscribe('SB_{}'.format(self.identifier))
-        logger.debug('subscribed to redis channel %s', 'SB_{}'.format(self.identifier))
         while True:
+            if not self.async_redis.is_connected():
+                logger.info('trying subscribe to redis channel %s', 'SB_{}'.format(self.identifier))
+                connect = yield self.async_redis.pubsub_subscribe('SB_{}'.format(self.identifier))
+                if connect:
+                    logger.info('subscribed to %s', 'SB_{}'.format(self.identifier))
+                else:
+                    logger.info('subscribe failed, retry in %ss', config.PUBSUB_RECONNECT_DELAY)
+                    yield gen.sleep(config.PUBSUB_RECONNECT_DELAY)
+                    continue
+
             msg = yield self.async_redis.pubsub_pop_message()
-            self.pubsub_callback(msg)
+            if isinstance(msg, ConnectionError):
+                logger.error('commands pubsub connection closed. Reconnect in %ss', config.PUBSUB_RECONNECT_DELAY)
+                yield gen.sleep(config.PUBSUB_RECONNECT_DELAY)
+            else:
+                self.pubsub_callback(msg)
 
 def run_process():
     parser = argparse.ArgumentParser(prog='single-beat', allow_abbrev=False, usage='%(prog)s [--singlebeat-start-paused] celerybeat_command')
