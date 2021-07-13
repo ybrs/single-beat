@@ -79,8 +79,6 @@ class Config(object):
                 socket_timeout=0.1,
                 socket_connect_timeout=1,
                 socket_keepalive=True,
-                health_check_interval=1,
-                retry_on_timeout=True
             )
         else:
             self._redis = redis.Redis.from_url(
@@ -88,8 +86,6 @@ class Config(object):
                 socket_timeout=0.1,
                 socket_connect_timeout=1,
                 socket_keepalive=True,
-                health_check_interval=1,
-                retry_on_timeout=True
             )
 
     def get_host_identifier(self):
@@ -163,6 +159,7 @@ class Process(object):
 
     def proc_exit_cb(self, exit_status):
         """When child exits we use the same exit status code"""
+        logger.info('proc_exit_cb receive exit signal %s from celery beat', exit_status)
         sys.exit(exit_status)
 
     def proc_exit_cb_noop(self, exit_status):
@@ -431,7 +428,7 @@ class Process(object):
         redis = config.get_redis()
         self.pubsub = redis.pubsub(ignore_subscribe_messages=True)
         self.pubsub.subscribe(**{'SB_{}'.format(self.identifier): self.pubsub_callback})
-        self.thread = PersistentPubSubWorkerThread(self.pubsub, sleep_time=0.001)
+        self.thread = PersistentPubSubWorkerThread(self.pubsub, sleep_time=0.001, daemon=True)
         self.thread.start()
         logger.info('subscribed to %s', 'SB_{}'.format(self.identifier))
 
