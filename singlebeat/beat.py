@@ -10,10 +10,10 @@ import sys
 import time
 
 import redis
+from redis.client import PubSubWorkerThread
 from redis.sentinel import Sentinel
 import tornado.ioloop
 import tornado.process
-from tornadis import PubSubClient, ConnectionError
 from tornado import gen
 
 
@@ -75,17 +75,22 @@ class Config(object):
         if self.REDIS_SENTINEL:
             sentinels = [tuple(s.split(':')) for s in self.REDIS_SENTINEL.split(';')]
             self._sentinel = redis.sentinel.Sentinel(sentinels,
-                                                     db=self.REDIS_SENTINEL_DB,
-                                                     socket_timeout=0.1)
+                db=self.REDIS_SENTINEL_DB,
+                socket_timeout=0.1,
+                socket_connect_timeout=1,
+                socket_keepalive=True,
+                health_check_interval=1,
+                retry_on_timeout=True
+            )
         else:
-            self._redis = redis.Redis.from_url(self.rewrite_redis_url())
-
-    def get_async_redis_client(self):
-        conn = self.get_redis().connection_pool\
-            .get_connection('ping')
-        host, port, password = conn.host, conn.port, conn.password
-        client = PubSubClient(host=host, port=port, password=password, autoconnect=True)
-        return client
+            self._redis = redis.Redis.from_url(
+                self.rewrite_redis_url(),
+                socket_timeout=0.1,
+                socket_connect_timeout=1,
+                socket_keepalive=True,
+                health_check_interval=1,
+                retry_on_timeout=True
+            )
 
     def get_host_identifier(self):
         """\
@@ -155,7 +160,7 @@ class Process(object):
             self.state = State.WAITING
 
         self.ioloop = tornado.ioloop.IOLoop.instance()
-        self.ioloop.spawn_callback(self.wait_for_commands)
+        self.wait_for_commands()
 
     def proc_exit_cb(self, exit_status):
         """When child exits we use the same exit status code"""
@@ -273,7 +278,7 @@ class Process(object):
         :return:
         """
         assert(self.state in ('WAITING', 'RUNNING', 'PAUSED'))
-        logger.debug("our state %s", self.state)
+        logger.debug("sigterm_handler our state %s", self.state)
         if self.state == 'WAITING':
             return self.ioloop.stop()
 
@@ -281,6 +286,9 @@ class Process(object):
             logger.debug('already running sending signal to child - %s',
                          self.sprocess.pid)
             os.kill(self.sprocess.pid, signum)
+        self.thread.stop()
+        self.thread.join()
+        self.pubsub.close()
         self.ioloop.stop()
 
     def run(self):
@@ -396,11 +404,11 @@ class Process(object):
     def pubsub_callback(self, msg):
         logger.info("got command - %s", msg)
 
-        if msg[0] != b'message':
+        if msg['type'] != 'message':
             return
 
         try:
-            cmd = json.loads(msg[2])
+            cmd = json.loads(msg['data'])
         except:
             logger.exception("exception on parsing command %s", msg)
             return
@@ -410,7 +418,7 @@ class Process(object):
             logger.info('cli_command_{} not found'.format(cmd['cmd']))
             return
 
-        logger.info("got command - %s running %s", msg[2], fn)
+        logger.info("got command - %s running %s", msg['data'], fn)
         info = fn(cmd)
         rds = config.get_redis()
         logger.info("reply to %s", cmd['reply_channel'])
@@ -420,26 +428,30 @@ class Process(object):
             'info': info or ''
         }))
 
-    @gen.coroutine
     def wait_for_commands(self):
+        redis = config.get_redis()
+        self.pubsub = redis.pubsub(ignore_subscribe_messages=True)
+        self.pubsub.subscribe(**{'SB_{}'.format(self.identifier): self.pubsub_callback})
+        self.thread = PersistentPubSubWorkerThread(self.pubsub, sleep_time=0.001)
+        self.thread.start()
         logger.info('subscribed to %s', 'SB_{}'.format(self.identifier))
-        while True:
-            if not self.async_redis.is_connected():
-                logger.info('trying subscribe to redis channel %s', 'SB_{}'.format(self.identifier))
-                connect = yield self.async_redis.pubsub_subscribe('SB_{}'.format(self.identifier))
-                if connect:
-                    logger.info('subscribed to %s', 'SB_{}'.format(self.identifier))
-                else:
-                    logger.info('subscribe failed, retry in %ss', config.PUBSUB_RECONNECT_DELAY)
-                    yield gen.sleep(config.PUBSUB_RECONNECT_DELAY)
-                    continue
 
-            msg = yield self.async_redis.pubsub_pop_message()
-            if isinstance(msg, ConnectionError):
-                logger.error('commands pubsub connection closed. Reconnect in %ss', config.PUBSUB_RECONNECT_DELAY)
-                yield gen.sleep(config.PUBSUB_RECONNECT_DELAY)
-            else:
-                self.pubsub_callback(msg)
+
+class PersistentPubSubWorkerThread(PubSubWorkerThread):
+    def run(self):
+        if self._running.is_set():
+            return
+        self._running.set()
+        pubsub = self.pubsub
+        sleep_time = self.sleep_time
+        while self._running.is_set():
+            try:
+                pubsub.get_message(ignore_subscribe_messages=True,
+                                   timeout=sleep_time)
+            except Exception:
+                logger.exception('PubSub get_message error')
+                time.sleep(0.1)
+        pubsub.close()
 
 def run_process():
     parser = argparse.ArgumentParser(prog='single-beat', allow_abbrev=False, usage='%(prog)s [--singlebeat-start-paused] celerybeat_command')
