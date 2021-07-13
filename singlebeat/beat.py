@@ -149,7 +149,6 @@ class Process(object):
         signal.signal(signal.SIGTERM, self.sigterm_handler)
         signal.signal(signal.SIGINT, self.sigterm_handler)
 
-        self.async_redis = config.get_async_redis_client()
         self.fence_token = 0
         self.sprocess = None
         self.pc = None
