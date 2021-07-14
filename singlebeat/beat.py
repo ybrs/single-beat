@@ -72,20 +72,22 @@ class Config(object):
         return 'redis://{}/'.format(self.REDIS_SERVER)
 
     def __init__(self):
+        redis_options = {
+            'socket_timeout': 0.1,
+            'socket_connect_timeout': 1,
+            'socket_keepalive': True,
+            'health_check_interval': 4,
+        }
         if self.REDIS_SENTINEL:
             sentinels = [tuple(s.split(':')) for s in self.REDIS_SENTINEL.split(';')]
             self._sentinel = redis.sentinel.Sentinel(sentinels,
                 db=self.REDIS_SENTINEL_DB,
-                socket_timeout=0.1,
-                socket_connect_timeout=1,
-                socket_keepalive=True,
+                **redis_options
             )
         else:
             self._redis = redis.Redis.from_url(
                 self.rewrite_redis_url(),
-                socket_timeout=0.1,
-                socket_connect_timeout=1,
-                socket_keepalive=True,
+                **redis_options
             )
 
     def get_host_identifier(self):
@@ -446,7 +448,7 @@ class PersistentPubSubWorkerThread(PubSubWorkerThread):
                                    timeout=sleep_time)
             except Exception:
                 logger.exception('PubSub get_message error')
-                time.sleep(0.1)
+                time.sleep(0.5)
         pubsub.close()
 
 def run_process():
