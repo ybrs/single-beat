@@ -13,8 +13,8 @@ setup(
     packages=['singlebeat'],
     zip_safe=True,
     install_requires=[
-        'tornado>=4.2.1,<6.0',
-        'redis >= 3.3.0',
+        'tornado>=6.0.0,<7.0',
+        'redis>=3.3.0',
         'Click>=7.0'
     ],
     test_require=[
