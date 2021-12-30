@@ -32,8 +32,14 @@ class TestStringMethods(unittest.TestCase):
         self.assertEqual(len(children), 1, "we have more than one child")
         # send kill to the child, see if someone else spawns
         os.kill(children[0].pid, signal.SIGTERM)
-        time.sleep(5)
-        new_children = self.get_all_children()
+        cnt = 0
+        while cnt < 30:
+            new_children = self.get_all_children()
+            if new_children:
+                break
+            time.sleep(1)
+            cnt += 1
+        self.assertGreater(len(children), 0, "couldn't spawn new child in 30 seconds")
         self.assertEqual(len(children), 1, "we have more than one child")
         self.assertNotEqual(children[0].pid, new_children[0].pid,
                             "couldn't kill child - pid should've changed")
