@@ -48,6 +48,7 @@ class TestStringMethods(unittest.TestCase):
         for p in self.processes:
             try:
                 p.terminate()
+                p.wait(10)
             except Exception as e:
                 import traceback
                 traceback.print_exc()
