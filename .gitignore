@@ -26,3 +26,5 @@ celerybeat-schedule.db
 .settings
 .pydevproject
 .DS_Store
+
+venv

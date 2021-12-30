@@ -10,8 +10,7 @@ import signal
 import tornado.ioloop
 import tornado.process
 import subprocess
-from tornadis import PubSubClient
-from tornado import gen
+import aioredis
 
 
 def noop(i):
@@ -83,8 +82,8 @@ class Config(object):
         conn = self.get_redis().connection_pool\
             .get_connection('ping')
         host, port, password = conn.host, conn.port, conn.password
-        client = PubSubClient(host=host, port=port, password=password, autoconnect=True)
-        return client
+        r = aioredis.Redis(host=host, port=port, password=password)
+        return r.pubsub()
 
     def get_host_identifier(self):
         """\
@@ -148,8 +147,8 @@ class Process(object):
         self.sprocess = None
         self.pc = None
         self.state = 'WAITING'
-        self.ioloop = tornado.ioloop.IOLoop.instance()
-        self.ioloop.spawn_callback(self.wait_for_commands)
+        self.ioloop = tornado.ioloop.IOLoop.current()
+        self.ioloop.add_callback(self.wait_for_commands)
 
     def proc_exit_cb(self, exit_status):
         """When child exits we use the same exit status code"""
@@ -277,6 +276,7 @@ class Process(object):
             os.kill(self.sprocess.pid, signum)
         self.ioloop.stop()
 
+
     def run(self):
         self.pc = tornado.ioloop.PeriodicCallback(self.timer_cb, config.HEARTBEAT_INTERVAL * 1000)
         self.pc.start()
@@ -304,9 +304,9 @@ class Process(object):
             return self.proc_exit_cb(1)
 
         self.sprocess.set_exit_callback(self.proc_exit_cb)
-        #
-        self.sprocess.stdout.read_until_close(streaming_callback=self.stdout_read_cb)
-        self.sprocess.stderr.read_until_close(streaming_callback=self.stderr_read_cb)
+
+        self.ioloop.add_callback(self.forward_stdout)
+        self.ioloop.add_callback(self.forward_stderr)
 
     def cli_command_info(self, msg):
         info = ''
@@ -392,11 +392,11 @@ class Process(object):
     def pubsub_callback(self, msg):
         logger.info("got command - %s", msg)
 
-        if msg[0] != b'message':
+        if msg['type'] != b'message':
             return
 
         try:
-            cmd = json.loads(msg[2])
+            cmd = json.loads(msg['data'])
         except:
             logger.exception("exception on parsing command %s", msg)
             return
@@ -406,7 +406,7 @@ class Process(object):
             logger.info('cli_command_{} not found'.format(cmd['cmd']))
             return
 
-        logger.info("got command - %s running %s", msg[2], fn)
+        logger.info("got command - %s running %s", msg['data'], fn)
         info = fn(cmd)
         rds = config.get_redis()
         logger.info("reply to %s", cmd['reply_channel'])
@@ -416,14 +416,25 @@ class Process(object):
             'info': info or ''
         }))
 
-    @gen.coroutine
-    def wait_for_commands(self):
+    async def wait_for_commands(self):
         logger.info('subscribed to %s', 'SB_{}'.format(self.identifier))
-        yield self.async_redis.pubsub_subscribe('SB_{}'.format(self.identifier))
+        await self.async_redis.subscribe('SB_{}'.format(self.identifier))
         logger.debug('subscribed to redis channel %s', 'SB_{}'.format(self.identifier))
-        while True:
-            msg = yield self.async_redis.pubsub_pop_message()
+        async for msg in self.async_redis.listen():
             self.pubsub_callback(msg)
+
+    async def forward_stdout(self):
+        b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
+        while len(b) > 0:
+            self.stdout_read_cb(b)
+            b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
+
+    async def forward_stderr(self):
+        b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
+        while len(b) > 0:
+            self.stderr_read_cb(b)
+            b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
+
 
 
 def run_process():
