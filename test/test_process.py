@@ -8,7 +8,6 @@ import signal
 
 
 class TestStringMethods(unittest.TestCase):
-
     def setUp(self):
         self.processes = [
             subprocess.Popen("single-beat python echo.py", shell=True)
@@ -41,8 +40,11 @@ class TestStringMethods(unittest.TestCase):
             cnt += 1
         self.assertGreater(len(children), 0, "couldn't spawn new child in 30 seconds")
         self.assertEqual(len(children), 1, "we have more than one child")
-        self.assertNotEqual(children[0].pid, new_children[0].pid,
-                            "couldn't kill child - pid should've changed")
+        self.assertNotEqual(
+            children[0].pid,
+            new_children[0].pid,
+            "couldn't kill child - pid should've changed",
+        )
 
     def tearDown(self):
         for p in self.processes:
@@ -51,7 +53,9 @@ class TestStringMethods(unittest.TestCase):
                 p.wait(10)
             except Exception as e:
                 import traceback
+
                 traceback.print_exc()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
