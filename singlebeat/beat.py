@@ -11,6 +11,7 @@ import tornado.ioloop
 import tornado.process
 import subprocess
 import aioredis
+import traceback
 
 
 def noop(i):
@@ -424,16 +425,22 @@ class Process(object):
             self.pubsub_callback(msg)
 
     async def forward_stdout(self):
-        b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
-        while len(b) > 0:
-            self.stdout_read_cb(b)
+        try:
             b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
+            while len(b) > 0:
+                self.stdout_read_cb(b)
+                b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
+        except:
+            logger.exception('error while forwarding to stdout')
 
     async def forward_stderr(self):
-        b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
-        while len(b) > 0:
-            self.stderr_read_cb(b)
+        try:
             b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
+            while len(b) > 0:
+                self.stderr_read_cb(b)
+                b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
+        except:
+            logger.exception('error while forwarding to stderr')
 
 
 

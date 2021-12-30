@@ -1,3 +1,7 @@
+Version 0.5.1
+==============
+ - guard stdout/stderr forwarding against crashes
+
 Version 0.5.0
 ==============
  - Enforce tornado >= 6.0
