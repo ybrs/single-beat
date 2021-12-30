@@ -287,5 +287,6 @@ Credits
  * [rangermeier](https://github.com/rangermeier)
  * [joekohlsdorf](https://github.com/joekohlsdorf)
  * [robvdl](https://github.com/robvdl)
+ * [neuroforge](https://github.com/neuroforgede/single-beat)
 
  

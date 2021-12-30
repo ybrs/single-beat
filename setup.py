@@ -5,11 +5,12 @@ with open("README.md", "r") as fh:
 
 setup(
     name='single-beat',
-    version='0.5.0',
+    version='0.5.1',
     long_description=long_description,
     long_description_content_type="text/markdown",
     description='ensures only one instance of your process across your servers',
     url='https://github.com/ybrs/single-beat',
+    license='MIT',
     packages=['singlebeat'],
     zip_safe=True,
     install_requires=[

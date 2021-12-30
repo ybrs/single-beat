@@ -1,3 +1,14 @@
+Version 0.5.1
+==============
+ - guard stdout/stderr forwarding against crashes
+
+Version 0.5.0
+==============
+ - Enforce tornado >= 6.0
+ - Switch redis library to aioredis
+ - remove tornadis dependency
+ - change async logic to use standard python async/await
+
 Version 0.4.2
 ==============
  - Fixes some small bug, typos in documentation.
