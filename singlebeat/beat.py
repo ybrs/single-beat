@@ -129,7 +129,7 @@ def get_process_identifier(args):
     return "_".join(args)
 
 
-class State(object):
+class State:
     PAUSED = "PAUSED"
     RUNNING = "RUNNING"
     WAITING = "WAITING"
@@ -154,21 +154,17 @@ class Process(object):
         self.ioloop = asyncio.get_running_loop()
 
         for signame in {'SIGINT', 'SIGTERM'}:
+            sig = getattr(signal, signame)
             self.ioloop.add_signal_handler(
-                getattr(signal, signame),
-                functools.partial(self.sigterm_handler, signame, self.ioloop))
-
-        # signal.signal(signal.SIGTERM, self.sigterm_handler)
-        # signal.signal(signal.SIGINT, self.sigterm_handler)
+                sig,
+                functools.partial(self.sigterm_handler, sig, self.ioloop))
 
         self.async_redis = config.get_async_redis_client()
         self.fence_token = 0
         self.sprocess = None
         self.pc = None
-        self.state = "WAITING"
+        self.state = State.WAITING
         self._periodic_callback_running = True
-        # self.ioloop = tornado.ioloop.IOLoop.current()
-        # self.ioloop.add_callback(self.wait_for_commands)
 
     def proc_exit_cb(self, exit_status):
         """When child exits we use the same exit status code"""
@@ -188,11 +184,13 @@ class Process(object):
         this is used when we restart the process,
         it re-triggers the start
         """
+        # TODO: await
         self.spawn_process()
 
     def proc_exit_cb_state_set(self, exit_status):
         if self.state == State.PAUSED:
             self.state = State.WAITING
+            # TODO:
             self.sprocess.set_exit_callback(self.proc_exit_cb)
 
     def stdout_read_cb(self, data):
@@ -201,13 +199,13 @@ class Process(object):
     def stderr_read_cb(self, data):
         sys.stderr.write(data.decode())
 
-    def timer_cb_paused(self):
+    async def timer_cb_paused(self):
         pass
 
-    def timer_cb_waiting(self):
+    async def timer_cb_waiting(self):
         if self.acquire_lock():
             logger.info("acquired lock, spawning child process")
-            return self.spawn_process()
+            return await self.spawn_process()
         # couldn't acquire lock
         if config.WAIT_MODE == "supervised":
             logger.debug(
@@ -227,7 +225,7 @@ class Process(object):
             return self.sprocess.pid
         return -1
 
-    def timer_cb_running(self):
+    async def timer_cb_running(self):
         rds = config.get_redis()
         # read current fence token
         redis_fence_token = rds.get(
@@ -269,20 +267,19 @@ class Process(object):
             # send sigterm to ourself and let the sigterm_handler do the rest
             os.kill(os.getpid(), signal.SIGTERM)
 
-    def timer_cb_restarting(self):
+    async def timer_cb_restarting(self):
         """\
         when restarting we are doing exactly the same as running - we don't want any other
         single-beat node to pick up
         :return:
         """
-        self.timer_cb_running()
+        await self.timer_cb_running()
 
     async def timer_cb(self):
         logger.debug("timer called %s state=%s", time.time() - self.t1, self.state)
         self.t1 = time.time()
         fn = getattr(self, "timer_cb_{}".format(self.state.lower()))
-        print("->>>", fn)
-        # fn()
+        await fn()
 
     def acquire_lock(self):
         rds = config.get_redis()
@@ -316,7 +313,9 @@ class Process(object):
             logger.debug(
                 "already running sending signal to child - %s", self.sprocess.pid
             )
-            os.kill(self.sprocess.pid, signum)
+            self.sprocess.send_signal(signum)
+            logger.debug("waiting for subprocess to finish")
+            self.ioloop.create_task(self.sprocess.wait())
         self._periodic_callback_running = False
 
     async def run(self):
@@ -324,16 +323,24 @@ class Process(object):
             await self.timer_cb()
             await asyncio.sleep(config.HEARTBEAT_INTERVAL)
 
-    def spawn_process(self):
-        STREAM = tornado.process.Subprocess.STREAM
+    async def _read_stream(self, stream, cb):
+        while True:
+            line = await stream.readline()
+            if line:
+                cb(line)
+            else:
+                break
+
+    async def spawn_process(self):
         cmd = self.args
         env = os.environ
 
         self.state = State.RUNNING
         try:
-            self.sprocess = tornado.process.Subprocess(
-                cmd, env=env, stdin=subprocess.PIPE, stdout=STREAM, stderr=STREAM
-            )
+            self.sprocess = await asyncio.create_subprocess_exec(*cmd,
+                                        env=env,
+                                        stdout=asyncio.subprocess.PIPE,
+                                        stderr=asyncio.subprocess.PIPE)
         except FileNotFoundError:
             """
             if the file that we need to run doesn't exists
@@ -342,10 +349,12 @@ class Process(object):
             logger.exception("file not found")
             return self.proc_exit_cb(1)
 
-        self.sprocess.set_exit_callback(self.proc_exit_cb)
-
-        self.ioloop.add_callback(self.forward_stdout)
-        self.ioloop.add_callback(self.forward_stderr)
+        await asyncio.wait([
+            self._read_stream(self.sprocess.stdout, self.forward_stdout),
+            self._read_stream(self.sprocess.stderr, self.forward_stderr)
+        ])
+        print("--> subprocess exited !!!!", self.sprocess.returncode)
+        self.proc_exit_cb(self.sprocess.returncode)
 
     def cli_command_info(self, msg):
         info = ""
@@ -467,23 +476,25 @@ class Process(object):
         async for msg in self.async_redis.listen():
             self.pubsub_callback(msg)
 
-    async def forward_stdout(self):
-        try:
-            b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
-            while len(b) > 0:
-                self.stdout_read_cb(b)
-                b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
-        except:
-            logger.exception("error while forwarding to stdout")
+    def forward_stdout(self, buf):
+        print(buf)
+        # try:
+        #     b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
+        #     while len(b) > 0:
+        #         self.stdout_read_cb(b)
+        #         b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
+        # except:
+        #     logger.exception("error while forwarding to stdout")
 
-    async def forward_stderr(self):
-        try:
-            b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
-            while len(b) > 0:
-                self.stderr_read_cb(b)
-                b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
-        except:
-            logger.exception("error while forwarding to stderr")
+    def forward_stderr(self, buf):
+        print(buf)
+        # try:
+        #     b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
+        #     while len(b) > 0:
+        #         self.stderr_read_cb(b)
+        #         b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
+        # except:
+        #     logger.exception("error while forwarding to stderr")
 
 
 async def run_process():
