@@ -1,3 +1,4 @@
+import functools
 import json
 import os
 import sys
@@ -11,7 +12,7 @@ import tornado.ioloop
 import tornado.process
 import subprocess
 import aioredis
-import traceback
+import asyncio
 
 
 def noop(i):
@@ -150,17 +151,24 @@ class Process(object):
         self.t1 = time.time()
 
         self.identifier = config.IDENTIFIER or get_process_identifier(self.args[1:])
+        self.ioloop = asyncio.get_running_loop()
 
-        signal.signal(signal.SIGTERM, self.sigterm_handler)
-        signal.signal(signal.SIGINT, self.sigterm_handler)
+        for signame in {'SIGINT', 'SIGTERM'}:
+            self.ioloop.add_signal_handler(
+                getattr(signal, signame),
+                functools.partial(self.sigterm_handler, signame, self.ioloop))
+
+        # signal.signal(signal.SIGTERM, self.sigterm_handler)
+        # signal.signal(signal.SIGINT, self.sigterm_handler)
 
         self.async_redis = config.get_async_redis_client()
         self.fence_token = 0
         self.sprocess = None
         self.pc = None
         self.state = "WAITING"
-        self.ioloop = tornado.ioloop.IOLoop.current()
-        self.ioloop.add_callback(self.wait_for_commands)
+        self._periodic_callback_running = True
+        # self.ioloop = tornado.ioloop.IOLoop.current()
+        # self.ioloop.add_callback(self.wait_for_commands)
 
     def proc_exit_cb(self, exit_status):
         """When child exits we use the same exit status code"""
@@ -269,11 +277,12 @@ class Process(object):
         """
         self.timer_cb_running()
 
-    def timer_cb(self):
+    async def timer_cb(self):
         logger.debug("timer called %s state=%s", time.time() - self.t1, self.state)
         self.t1 = time.time()
         fn = getattr(self, "timer_cb_{}".format(self.state.lower()))
-        fn()
+        print("->>>", fn)
+        # fn()
 
     def acquire_lock(self):
         rds = config.get_redis()
@@ -286,34 +295,34 @@ class Process(object):
             config.INITIAL_LOCK_TIME,
         )
 
-    def sigterm_handler(self, signum, frame):
+    def sigterm_handler(self, signum, loop):
         """When we get term signal
         if we are waiting and got a sigterm, we just exit.
         if we have a child running, we pass the signal first to the child
         then we exit.
 
+        To exit we signal our main sleep/trigger loop on `self.run()`
+
         :param signum:
-        :param frame:
+        :param ioloop:
         :return:
         """
         assert self.state in ("WAITING", "RUNNING", "PAUSED")
         logger.debug("our state %s", self.state)
         if self.state == "WAITING":
-            return self.ioloop.stop()
+            self._periodic_callback_running = False
 
         if self.state == "RUNNING":
             logger.debug(
                 "already running sending signal to child - %s", self.sprocess.pid
             )
             os.kill(self.sprocess.pid, signum)
-        self.ioloop.stop()
+        self._periodic_callback_running = False
 
-    def run(self):
-        self.pc = tornado.ioloop.PeriodicCallback(
-            self.timer_cb, config.HEARTBEAT_INTERVAL * 1000
-        )
-        self.pc.start()
-        self.ioloop.start()
+    async def run(self):
+        while self._periodic_callback_running:
+            await self.timer_cb()
+            await asyncio.sleep(config.HEARTBEAT_INTERVAL)
 
     def spawn_process(self):
         STREAM = tornado.process.Subprocess.STREAM
@@ -477,10 +486,31 @@ class Process(object):
             logger.exception("error while forwarding to stderr")
 
 
-def run_process():
+async def run_process():
     process = Process(sys.argv[1:])
-    process.run()
+    await process.run()
 
+
+def main():
+    asyncio.run(run_process())
 
 if __name__ == "__main__":
-    run_process()
+    main()
+
+# async def run(cmd):
+#     proc = await asyncio.create_subprocess_shell(
+#         cmd,
+#         stdout=asyncio.subprocess.PIPE,
+#         stderr=asyncio.subprocess.PIPE)
+#
+#     stdout, stderr = await proc.communicate()
+#
+#     print(f'[{cmd!r} exited with {proc.returncode}]')
+#     if stdout:
+#         print(f'[stdout]\n{stdout.decode()}')
+#     if stderr:
+#         print(f'[stderr]\n{stderr.decode()}')
+#
+# asyncio.run(run('ls .'))
+#
+#

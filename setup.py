@@ -13,18 +13,19 @@ setup(
     license='MIT',
     packages=['singlebeat'],
     zip_safe=True,
+    python_requires='>3.7.0',
     install_requires=[
         'tornado >= 6.0,<7.0',
         'redis >= 2.9.1',
         'aioredis >= 2.0'
-        'Click>=7.0'
+        'Click>=7.0',
     ],
     test_require=[
         'psutil>=5.2.2'
     ],
     entry_points={
         'console_scripts': [
-            'single-beat = singlebeat.beat:run_process',
+            'single-beat = singlebeat.beat:main',
             'single-beat-cli = singlebeat.cli:main',
         ],
     }
