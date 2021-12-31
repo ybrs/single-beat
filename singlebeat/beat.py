@@ -169,6 +169,7 @@ class Process(object):
 
     def proc_exit_cb(self, exit_status):
         """When child exits we use the same exit status code"""
+        self._periodic_callback_running = False
         sys.exit(exit_status)
 
     def proc_exit_cb_noop(self, exit_status):
@@ -348,14 +349,16 @@ class Process(object):
             """
             logger.exception("file not found")
             return self.child_exit_cb(1)
-
-        await asyncio.wait(
-            [
-                self._read_stream(self.sprocess.stdout, self.forward_stdout),
-                self._read_stream(self.sprocess.stderr, self.forward_stderr),
-            ]
-        )
-        self.child_exit_cb(self.sprocess.returncode)
+        try:
+            await asyncio.wait(
+                [
+                    self._read_stream(self.sprocess.stdout, self.forward_stdout),
+                    self._read_stream(self.sprocess.stderr, self.forward_stderr),
+                ]
+            )
+            self.child_exit_cb(self.sprocess.returncode)
+        except SystemExit:
+            pass
 
     def cli_command_info(self, msg):
         info = ""
