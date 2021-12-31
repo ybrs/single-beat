@@ -153,11 +153,11 @@ class Process(object):
         self.identifier = config.IDENTIFIER or get_process_identifier(self.args[1:])
         self.ioloop = asyncio.get_running_loop()
 
-        for signame in {'SIGINT', 'SIGTERM'}:
+        for signame in {"SIGINT", "SIGTERM"}:
             sig = getattr(signal, signame)
             self.ioloop.add_signal_handler(
-                sig,
-                functools.partial(self.sigterm_handler, sig, self.ioloop))
+                sig, functools.partial(self.sigterm_handler, sig, self.ioloop)
+            )
 
         self.async_redis = config.get_async_redis_client()
         self.fence_token = 0
@@ -185,13 +185,11 @@ class Process(object):
         it re-triggers the start
         """
         # TODO: await
-        self.spawn_process()
+        self.ioloop.create_task(self.spawn_process())
 
     def proc_exit_cb_state_set(self, exit_status):
         if self.state == State.PAUSED:
             self.state = State.WAITING
-            # TODO:
-            self.sprocess.set_exit_callback(self.proc_exit_cb)
 
     def stdout_read_cb(self, data):
         sys.stdout.write(data.decode())
@@ -325,7 +323,7 @@ class Process(object):
 
     async def _read_stream(self, stream, cb):
         while True:
-            line = await stream.readline()
+            line = await stream.read(100)
             if line:
                 cb(line)
             else:
@@ -337,10 +335,12 @@ class Process(object):
 
         self.state = State.RUNNING
         try:
-            self.sprocess = await asyncio.create_subprocess_exec(*cmd,
-                                        env=env,
-                                        stdout=asyncio.subprocess.PIPE,
-                                        stderr=asyncio.subprocess.PIPE)
+            self.sprocess = await asyncio.create_subprocess_exec(
+                *cmd,
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
         except FileNotFoundError:
             """
             if the file that we need to run doesn't exists
@@ -349,11 +349,12 @@ class Process(object):
             logger.exception("file not found")
             return self.proc_exit_cb(1)
 
-        await asyncio.wait([
-            self._read_stream(self.sprocess.stdout, self.forward_stdout),
-            self._read_stream(self.sprocess.stderr, self.forward_stderr)
-        ])
-        print("--> subprocess exited !!!!", self.sprocess.returncode)
+        await asyncio.wait(
+            [
+                self._read_stream(self.sprocess.stdout, self.forward_stdout),
+                self._read_stream(self.sprocess.stderr, self.forward_stderr),
+            ]
+        )
         self.proc_exit_cb(self.sprocess.returncode)
 
     def cli_command_info(self, msg):
@@ -386,6 +387,7 @@ class Process(object):
         """
         info = ""
         if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
+            # TODO:
             self.sprocess.set_exit_callback(self.proc_exit_cb_noop)
             self.sprocess.proc.kill()
             info = "killed"
@@ -411,8 +413,9 @@ class Process(object):
         info = ""
         if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
             self.state = State.PAUSED
-            self.sprocess.set_exit_callback(self.proc_exit_cb_state_set)
-            self.sprocess.proc.kill()
+            # TODO:
+            # self.sprocess.set_exit_callback(self.proc_exit_cb_state_set)
+            self.sprocess.kill()
             info = "killed"
             # TODO: check if process is really dead etc.
         return info
@@ -431,8 +434,9 @@ class Process(object):
         info = ""
         if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
             self.state = State.RESTARTING
-            self.sprocess.set_exit_callback(self.proc_exit_cb_restart)
-            self.sprocess.proc.kill()
+            # TODO:
+            # self.sprocess.set_exit_callback(self.proc_exit_cb_restart)
+            self.sprocess.kill()
             info = "killed"
             # TODO: check if process is really dead etc.
         return info
@@ -477,24 +481,10 @@ class Process(object):
             self.pubsub_callback(msg)
 
     def forward_stdout(self, buf):
-        print(buf)
-        # try:
-        #     b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
-        #     while len(b) > 0:
-        #         self.stdout_read_cb(b)
-        #         b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
-        # except:
-        #     logger.exception("error while forwarding to stdout")
+        self.stdout_read_cb(buf)
 
     def forward_stderr(self, buf):
-        print(buf)
-        # try:
-        #     b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
-        #     while len(b) > 0:
-        #         self.stderr_read_cb(b)
-        #         b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
-        # except:
-        #     logger.exception("error while forwarding to stderr")
+        self.stderr_read_cb(buf)
 
 
 async def run_process():
@@ -504,6 +494,7 @@ async def run_process():
 
 def main():
     asyncio.run(run_process())
+
 
 if __name__ == "__main__":
     main()
