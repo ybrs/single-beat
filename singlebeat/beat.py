@@ -165,6 +165,7 @@ class Process(object):
         self.pc = None
         self.state = State.WAITING
         self._periodic_callback_running = True
+        self.child_exit_cb = self.proc_exit_cb
 
     def proc_exit_cb(self, exit_status):
         """When child exits we use the same exit status code"""
@@ -184,8 +185,7 @@ class Process(object):
         this is used when we restart the process,
         it re-triggers the start
         """
-        # TODO: await
-        self.ioloop.create_task(self.spawn_process())
+        self.ioloop.run_until_complete(self.spawn_process())
 
     def proc_exit_cb_state_set(self, exit_status):
         if self.state == State.PAUSED:
@@ -202,8 +202,8 @@ class Process(object):
 
     async def timer_cb_waiting(self):
         if self.acquire_lock():
-            logger.info("acquired lock, spawning child process")
-            return await self.spawn_process()
+            logger.info(f"acquired lock, {self.identifier} spawning child process")
+            return self.ioloop.create_task(self.spawn_process())
         # couldn't acquire lock
         if config.WAIT_MODE == "supervised":
             logger.debug(
@@ -347,7 +347,7 @@ class Process(object):
             we immediately exit.
             """
             logger.exception("file not found")
-            return self.proc_exit_cb(1)
+            return self.child_exit_cb(1)
 
         await asyncio.wait(
             [
@@ -355,7 +355,7 @@ class Process(object):
                 self._read_stream(self.sprocess.stderr, self.forward_stderr),
             ]
         )
-        self.proc_exit_cb(self.sprocess.returncode)
+        self.child_exit_cb(self.sprocess.returncode)
 
     def cli_command_info(self, msg):
         info = ""
@@ -364,12 +364,15 @@ class Process(object):
                 info = "pid: {}".format(self.sprocess.pid)
         return info
 
+    def child_process_alive(self):
+        return not self.sprocess.protocol._process_exited
+
     def cli_command_quit(self, msg):
         """\
         kills the child and exits
         """
-        if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
-            self.sprocess.proc.kill()
+        if self.state == State.RUNNING and self.sprocess and self.child_process_alive():
+            self.sprocess.kill()
         else:
             sys.exit(0)
 
@@ -386,10 +389,9 @@ class Process(object):
         :return:
         """
         info = ""
-        if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
-            # TODO:
-            self.sprocess.set_exit_callback(self.proc_exit_cb_noop)
-            self.sprocess.proc.kill()
+        if self.state == State.RUNNING and self.sprocess and self.child_process_alive():
+            self.child_exit_cb = self.proc_exit_cb_noop
+            self.sprocess.kill()
             info = "killed"
             # TODO: check if process is really dead etc.
         self.state = State.PAUSED
@@ -434,8 +436,7 @@ class Process(object):
         info = ""
         if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
             self.state = State.RESTARTING
-            # TODO:
-            # self.sprocess.set_exit_callback(self.proc_exit_cb_restart)
+            self.child_exit_cb = self.proc_exit_cb_restart
             self.sprocess.kill()
             info = "killed"
             # TODO: check if process is really dead etc.
@@ -499,20 +500,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-# async def run(cmd):
-#     proc = await asyncio.create_subprocess_shell(
-#         cmd,
-#         stdout=asyncio.subprocess.PIPE,
-#         stderr=asyncio.subprocess.PIPE)
-#
-#     stdout, stderr = await proc.communicate()
-#
-#     print(f'[{cmd!r} exited with {proc.returncode}]')
-#     if stdout:
-#         print(f'[stdout]\n{stdout.decode()}')
-#     if stderr:
-#         print(f'[stderr]\n{stderr.decode()}')
-#
-# asyncio.run(run('ls .'))
-#
-#
