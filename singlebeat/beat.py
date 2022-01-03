@@ -357,8 +357,8 @@ class Process(object):
                 ]
             )
             self.child_exit_cb(self.sprocess.returncode)
-        except SystemExit:
-            pass
+        except SystemExit as e:
+            os._exit(e.code)
 
     def cli_command_info(self, msg):
         info = ""
