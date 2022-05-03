@@ -16,7 +16,7 @@ setup(
     install_requires=[
         'tornado >= 6.0,<7.0',
         'redis >= 2.9.1',
-        'aioredis >= 2.0'
+        'aioredis >= 1.3.1,<2.0'
         'Click>=7.0'
     ],
     test_require=[

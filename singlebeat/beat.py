@@ -88,7 +88,11 @@ class Config(object):
         conn = self.get_redis().connection_pool\
             .get_connection('ping')
         host, port, password = conn.host, conn.port, conn.password
-        r = aioredis.Redis(host=host, port=port, password=password)
+        redis_connection = redis.Redis(
+            host=host,
+            port=port,
+            password=password)
+        r = aioredis.Redis(redis_connection)
         return r.pubsub()
 
     def get_host_identifier(self):
