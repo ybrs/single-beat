@@ -92,8 +92,7 @@ class Config(object):
             host=host,
             port=port,
             password=password)
-        r = aioredis.Redis(redis_connection)
-        return r.pubsub()
+        return aioredis.Redis(redis_connection)
 
     def get_host_identifier(self):
         """\
