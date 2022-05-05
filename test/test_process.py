@@ -8,12 +8,8 @@ import signal
 
 
 class TestStringMethods(unittest.TestCase):
-
     def setup_processes(self, cmd="single-beat python echo.py", cnt=3):
-        self.processes = [
-            subprocess.Popen(cmd, shell=True)
-            for i in range(0, cnt)
-        ]
+        self.processes = [subprocess.Popen(cmd, shell=True) for i in range(0, cnt)]
 
     def get_all_children(self):
         children = []

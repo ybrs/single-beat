@@ -1,6 +1,7 @@
 import sys
 import time
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 
 while True:
