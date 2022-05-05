@@ -1,3 +1,4 @@
+import functools
 import json
 import os
 import sys
@@ -11,7 +12,7 @@ import tornado.ioloop
 import tornado.process
 import subprocess
 import aioredis
-import traceback
+import asyncio
 
 
 def noop(i):
@@ -19,7 +20,7 @@ def noop(i):
 
 
 def env(identifier, default, type=noop):
-    return type(os.getenv('SINGLE_BEAT_%s' % identifier, default))
+    return type(os.getenv("SINGLE_BEAT_%s" % identifier, default))
 
 
 class Config(object):
@@ -36,8 +37,8 @@ class Config(object):
     HOST_IDENTIFIER = env('HOST_IDENTIFIER', socket.gethostname())
     LOG_LEVEL = env('LOG_LEVEL', 'warn')
     # wait_mode can be, supervisord or heartbeat
-    WAIT_MODE = env('WAIT_MODE', 'heartbeat')
-    WAIT_BEFORE_DIE = env('WAIT_BEFORE_DIE', 60, int)
+    WAIT_MODE = env("WAIT_MODE", "heartbeat")
+    WAIT_BEFORE_DIE = env("WAIT_BEFORE_DIE", 60, int)
     _host_identifier = None
 
     def check(self, cond, message):
@@ -45,9 +46,15 @@ class Config(object):
             raise Exception(message)
 
     def checks(self):
-        self.check(self.LOCK_TIME < self.INITIAL_LOCK_TIME, "initial lock time must be greater than lock time")
-        self.check(self.HEARTBEAT_INTERVAL < (self.LOCK_TIME / 2.0), "SINGLE_BEAT_HEARTBEAT_INTERVAL must be smaller than SINGLE_BEAT_LOCK_TIME / 2")
-        self.check(self.WAIT_MODE in ('supervised', 'heartbeat'), 'undefined wait mode')
+        self.check(
+            self.LOCK_TIME < self.INITIAL_LOCK_TIME,
+            "initial lock time must be greater than lock time",
+        )
+        self.check(
+            self.HEARTBEAT_INTERVAL < (self.LOCK_TIME / 2.0),
+            "SINGLE_BEAT_HEARTBEAT_INTERVAL must be smaller than SINGLE_BEAT_LOCK_TIME / 2",
+        )
+        self.check(self.WAIT_MODE in ("supervised", "heartbeat"), "undefined wait mode")
         if self.REDIS_SENTINEL:
             master = self._sentinel.discover_master(self.REDIS_SENTINEL_MASTER)
         else:
@@ -67,11 +74,13 @@ class Config(object):
         localhost while you try to connect to another server
         :return:
         """
-        if self.REDIS_SERVER.startswith('unix://') or \
-                self.REDIS_SERVER.startswith('redis://') or \
-                self.REDIS_SERVER.startswith('rediss://'):
+        if (
+            self.REDIS_SERVER.startswith("unix://")
+            or self.REDIS_SERVER.startswith("redis://")
+            or self.REDIS_SERVER.startswith("rediss://")
+        ):
             return self.REDIS_SERVER
-        return 'redis://{}/'.format(self.REDIS_SERVER)
+        return "redis://{}/".format(self.REDIS_SERVER)
 
     def __init__(self):
         if self.REDIS_SENTINEL:
@@ -85,8 +94,7 @@ class Config(object):
             self._redis = redis.Redis.from_url(self.rewrite_redis_url())
 
     def get_async_redis_client(self):
-        conn = self.get_redis().connection_pool\
-            .get_connection('ping')
+        conn = self.get_redis().connection_pool.get_connection("ping")
         host, port, password = conn.host, conn.port, conn.password
         r = aioredis.Redis(host=host, port=port, password=password)
         return r.pubsub()
@@ -100,9 +108,12 @@ class Config(object):
         """
         if self._host_identifier:
             return self._host_identifier
-        local_ip_addr = self.get_redis().connection_pool\
-            .get_connection('ping')._sock.getsockname()[0]
-        self._host_identifier = '{}:{}'.format(local_ip_addr, os.getpid())
+        local_ip_addr = (
+            self.get_redis()
+            .connection_pool.get_connection("ping")
+            ._sock.getsockname()[0]
+        )
+        self._host_identifier = "{}:{}".format(local_ip_addr, os.getpid())
         return self._host_identifier
 
 
@@ -116,17 +127,17 @@ logger = logging.getLogger(__name__)
 
 def get_process_identifier(args):
     """by looking at arguments we try to generate a proper identifier
-        >>> get_process_identifier(['python', 'echo.py', '1'])
-        'python_echo.py_1'
+    >>> get_process_identifier(['python', 'echo.py', '1'])
+    'python_echo.py_1'
     """
-    return '_'.join(args)
+    return "_".join(args)
 
 
-class State(object):
-    PAUSED = 'PAUSED'
-    RUNNING = 'RUNNING'
-    WAITING = 'WAITING'
-    RESTARTING = 'RESTARTING'
+class State:
+    PAUSED = "PAUSED"
+    RUNNING = "RUNNING"
+    WAITING = "WAITING"
+    RESTARTING = "RESTARTING"
 
 
 def is_process_alive(pid):
@@ -144,20 +155,25 @@ class Process(object):
         self.t1 = time.time()
 
         self.identifier = config.IDENTIFIER or get_process_identifier(self.args[1:])
+        self.ioloop = asyncio.get_running_loop()
 
-        signal.signal(signal.SIGTERM, self.sigterm_handler)
-        signal.signal(signal.SIGINT, self.sigterm_handler)
+        for signame in {"SIGINT", "SIGTERM"}:
+            sig = getattr(signal, signame)
+            self.ioloop.add_signal_handler(
+                sig, functools.partial(self.sigterm_handler, sig, self.ioloop)
+            )
 
         self.async_redis = config.get_async_redis_client()
         self.fence_token = 0
         self.sprocess = None
         self.pc = None
-        self.state = 'WAITING'
-        self.ioloop = tornado.ioloop.IOLoop.current()
-        self.ioloop.add_callback(self.wait_for_commands)
+        self.state = State.WAITING
+        self._periodic_callback_running = True
+        self.child_exit_cb = self.proc_exit_cb
 
     def proc_exit_cb(self, exit_status):
         """When child exits we use the same exit status code"""
+        self._periodic_callback_running = False
         sys.exit(exit_status)
 
     def proc_exit_cb_noop(self, exit_status):
@@ -174,12 +190,11 @@ class Process(object):
         this is used when we restart the process,
         it re-triggers the start
         """
-        self.spawn_process()
+        self.ioloop.run_until_complete(self.spawn_process())
 
     def proc_exit_cb_state_set(self, exit_status):
         if self.state == State.PAUSED:
             self.state = State.WAITING
-            self.sprocess.set_exit_callback(self.proc_exit_cb)
 
     def stdout_read_cb(self, data):
         sys.stdout.write(data.decode())
@@ -187,17 +202,18 @@ class Process(object):
     def stderr_read_cb(self, data):
         sys.stderr.write(data.decode())
 
-    def timer_cb_paused(self):
+    async def timer_cb_paused(self):
         pass
 
-    def timer_cb_waiting(self):
+    async def timer_cb_waiting(self):
         if self.acquire_lock():
-            logger.info("acquired lock, spawning child process")
-            return self.spawn_process()
+            logger.info(f"acquired lock, {self.identifier} spawning child process")
+            return self.ioloop.create_task(self.spawn_process())
         # couldn't acquire lock
-        if config.WAIT_MODE == 'supervised':
-            logger.debug("already running, will exit after %s seconds"
-                          % config.WAIT_BEFORE_DIE)
+        if config.WAIT_MODE == "supervised":
+            logger.debug(
+                "already running, will exit after %s seconds" % config.WAIT_BEFORE_DIE
+            )
             time.sleep(config.WAIT_BEFORE_DIE)
             sys.exit()
 
@@ -212,15 +228,19 @@ class Process(object):
             return self.sprocess.pid
         return -1
 
-    def timer_cb_running(self):
+    async def timer_cb_running(self):
         rds = config.get_redis()
         # read current fence token
-        redis_fence_token = rds.get("SINGLE_BEAT_{identifier}".format(identifier=self.identifier))
+        redis_fence_token = rds.get(
+            "SINGLE_BEAT_{identifier}".format(identifier=self.identifier)
+        )
 
         if redis_fence_token:
             redis_fence_token = int(redis_fence_token.split(b":")[0])
         else:
-            logger.error("fence token could not be read from Redis - assuming lock expired, trying to reacquire lock")
+            logger.error(
+                "fence token could not be read from Redis - assuming lock expired, trying to reacquire lock"
+            )
             if self.acquire_lock():
                 logger.info("reacquired lock")
                 redis_fence_token = self.fence_token
@@ -228,105 +248,138 @@ class Process(object):
                 logger.error("unable to reacquire lock, terminating")
                 os.kill(os.getpid(), signal.SIGTERM)
 
-        logger.debug("expected fence token: {} fence token read from Redis: {}".format(self.fence_token, redis_fence_token))
+        logger.debug(
+            "expected fence token: {} fence token read from Redis: {}".format(
+                self.fence_token, redis_fence_token
+            )
+        )
 
         if self.fence_token == redis_fence_token:
             self.fence_token += 1
-            rds.set("SINGLE_BEAT_{identifier}".format(identifier=self.identifier),
-                    "{}:{}:{}".format(self.fence_token, config.HOST_IDENTIFIER, self.process_pid()),
-                    ex=config.LOCK_TIME)
+            rds.set(
+                "SINGLE_BEAT_{identifier}".format(identifier=self.identifier),
+                "{}:{}:{}".format(
+                    self.fence_token, config.HOST_IDENTIFIER, self.process_pid()
+                ),
+                ex=config.LOCK_TIME,
+            )
         else:
-            logger.error("fence token did not match - lock is held by another process, terminating")
+            logger.error(
+                "fence token did not match - lock is held by another process, terminating"
+            )
             # send sigterm to ourself and let the sigterm_handler do the rest
             os.kill(os.getpid(), signal.SIGTERM)
 
-    def timer_cb_restarting(self):
+    async def timer_cb_restarting(self):
         """\
         when restarting we are doing exactly the same as running - we don't want any other
         single-beat node to pick up
         :return:
         """
-        self.timer_cb_running()
+        await self.timer_cb_running()
 
-    def timer_cb(self):
-        logger.debug("timer called %s state=%s",
-                     time.time() - self.t1, self.state)
+    async def timer_cb(self):
+        logger.debug("timer called %s state=%s", time.time() - self.t1, self.state)
         self.t1 = time.time()
-        fn = getattr(self, 'timer_cb_{}'.format(self.state.lower()))
-        fn()
+        fn = getattr(self, "timer_cb_{}".format(self.state.lower()))
+        await fn()
 
     def acquire_lock(self):
         rds = config.get_redis()
-        return rds.execute_command("SET", "SINGLE_BEAT_{}".format(self.identifier),
-                                   "{}:{}:{}".format(self.fence_token, config.HOST_IDENTIFIER, 0),
-                                   "NX", "EX", config.INITIAL_LOCK_TIME)
+        return rds.execute_command(
+            "SET",
+            "SINGLE_BEAT_{}".format(self.identifier),
+            "{}:{}:{}".format(self.fence_token, config.HOST_IDENTIFIER, 0),
+            "NX",
+            "EX",
+            config.INITIAL_LOCK_TIME,
+        )
 
-    def sigterm_handler(self, signum, frame):
-        """ When we get term signal
+    def sigterm_handler(self, signum, loop):
+        """When we get term signal
         if we are waiting and got a sigterm, we just exit.
         if we have a child running, we pass the signal first to the child
         then we exit.
 
+        To exit we signal our main sleep/trigger loop on `self.run()`
+
         :param signum:
-        :param frame:
+        :param ioloop:
         :return:
         """
-        assert(self.state in ('WAITING', 'RUNNING', 'PAUSED'))
+        assert self.state in ("WAITING", "RUNNING", "PAUSED")
         logger.debug("our state %s", self.state)
-        if self.state == 'WAITING':
-            return self.ioloop.stop()
+        if self.state == "WAITING":
+            self._periodic_callback_running = False
 
-        if self.state == 'RUNNING':
-            logger.debug('already running sending signal to child - %s',
-                         self.sprocess.pid)
-            os.kill(self.sprocess.pid, signum)
-        self.ioloop.stop()
+        if self.state == "RUNNING":
+            logger.debug(
+                "already running sending signal to child - %s", self.sprocess.pid
+            )
+            self.sprocess.send_signal(signum)
+            logger.debug("waiting for subprocess to finish")
+            self.ioloop.create_task(self.sprocess.wait())
+        self._periodic_callback_running = False
 
+    async def run(self):
+        while self._periodic_callback_running:
+            await self.timer_cb()
+            await asyncio.sleep(config.HEARTBEAT_INTERVAL)
 
-    def run(self):
-        self.pc = tornado.ioloop.PeriodicCallback(self.timer_cb, config.HEARTBEAT_INTERVAL * 1000)
-        self.pc.start()
-        self.ioloop.start()
+    async def _read_stream(self, stream, cb):
+        while True:
+            line = await stream.read(100)
+            if line:
+                cb(line)
+            else:
+                break
 
-    def spawn_process(self):
-        STREAM = tornado.process.Subprocess.STREAM
+    async def spawn_process(self):
         cmd = self.args
         env = os.environ
 
         self.state = State.RUNNING
         try:
-            self.sprocess = tornado.process.Subprocess(cmd,
-                        env=env,
-                        stdin=subprocess.PIPE,
-                        stdout=STREAM,
-                        stderr=STREAM
-                       )
+            self.sprocess = await asyncio.create_subprocess_exec(
+                *cmd,
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
         except FileNotFoundError:
             """
             if the file that we need to run doesn't exists
             we immediately exit.
             """
             logger.exception("file not found")
-            return self.proc_exit_cb(1)
-
-        self.sprocess.set_exit_callback(self.proc_exit_cb)
-
-        self.ioloop.add_callback(self.forward_stdout)
-        self.ioloop.add_callback(self.forward_stderr)
+            return self.child_exit_cb(1)
+        try:
+            await asyncio.wait(
+                [
+                    self._read_stream(self.sprocess.stdout, self.forward_stdout),
+                    self._read_stream(self.sprocess.stderr, self.forward_stderr),
+                ]
+            )
+            self.child_exit_cb(self.sprocess.returncode)
+        except SystemExit as e:
+            os._exit(e.code)
 
     def cli_command_info(self, msg):
-        info = ''
+        info = ""
         if self.sprocess:
             if is_process_alive(self.sprocess.pid):
-                info = 'pid: {}'.format(self.sprocess.pid)
+                info = "pid: {}".format(self.sprocess.pid)
         return info
+
+    def child_process_alive(self):
+        return not self.sprocess.protocol._process_exited
 
     def cli_command_quit(self, msg):
         """\
         kills the child and exits
         """
-        if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
-            self.sprocess.proc.kill()
+        if self.state == State.RUNNING and self.sprocess and self.child_process_alive():
+            self.sprocess.kill()
         else:
             sys.exit(0)
 
@@ -342,11 +395,11 @@ class Process(object):
         :param msg:
         :return:
         """
-        info = ''
-        if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
-            self.sprocess.set_exit_callback(self.proc_exit_cb_noop)
-            self.sprocess.proc.kill()
-            info = 'killed'
+        info = ""
+        if self.state == State.RUNNING and self.sprocess and self.child_process_alive():
+            self.child_exit_cb = self.proc_exit_cb_noop
+            self.sprocess.kill()
+            info = "killed"
             # TODO: check if process is really dead etc.
         self.state = State.PAUSED
         return info
@@ -366,12 +419,13 @@ class Process(object):
         :param msg:
         :return:
         """
-        info = ''
+        info = ""
         if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
             self.state = State.PAUSED
-            self.sprocess.set_exit_callback(self.proc_exit_cb_state_set)
-            self.sprocess.proc.kill()
-            info = 'killed'
+            # TODO:
+            # self.sprocess.set_exit_callback(self.proc_exit_cb_state_set)
+            self.sprocess.kill()
+            info = "killed"
             # TODO: check if process is really dead etc.
         return info
 
@@ -386,73 +440,70 @@ class Process(object):
         :param msg:
         :return:
         """
-        info = ''
+        info = ""
         if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
             self.state = State.RESTARTING
-            self.sprocess.set_exit_callback(self.proc_exit_cb_restart)
-            self.sprocess.proc.kill()
-            info = 'killed'
+            self.child_exit_cb = self.proc_exit_cb_restart
+            self.sprocess.kill()
+            info = "killed"
             # TODO: check if process is really dead etc.
         return info
 
     def pubsub_callback(self, msg):
         logger.info("got command - %s", msg)
 
-        if msg['type'] != b'message':
+        if msg["type"] != b"message":
             return
 
         try:
-            cmd = json.loads(msg['data'])
+            cmd = json.loads(msg["data"])
         except:
             logger.exception("exception on parsing command %s", msg)
             return
 
-        fn = getattr(self, 'cli_command_{}'.format(cmd['cmd']), None)
+        fn = getattr(self, "cli_command_{}".format(cmd["cmd"]), None)
         if not fn:
-            logger.info('cli_command_{} not found'.format(cmd['cmd']))
+            logger.info("cli_command_{} not found".format(cmd["cmd"]))
             return
 
-        logger.info("got command - %s running %s", msg['data'], fn)
+        logger.info("got command - %s running %s", msg["data"], fn)
         info = fn(cmd)
         rds = config.get_redis()
-        logger.info("reply to %s", cmd['reply_channel'])
-        rds.publish(cmd['reply_channel'], json.dumps({
-            'identifier': config.get_host_identifier(),
-            'state': self.state,
-            'info': info or ''
-        }))
+        logger.info("reply to %s", cmd["reply_channel"])
+        rds.publish(
+            cmd["reply_channel"],
+            json.dumps(
+                {
+                    "identifier": config.get_host_identifier(),
+                    "state": self.state,
+                    "info": info or "",
+                }
+            ),
+        )
 
     async def wait_for_commands(self):
-        logger.info('subscribed to %s', 'SB_{}'.format(self.identifier))
-        await self.async_redis.subscribe('SB_{}'.format(self.identifier))
-        logger.debug('subscribed to redis channel %s', 'SB_{}'.format(self.identifier))
+        logger.info("subscribed to %s", "SB_{}".format(self.identifier))
+        await self.async_redis.subscribe("SB_{}".format(self.identifier))
+        logger.debug("subscribed to redis channel %s", "SB_{}".format(self.identifier))
         async for msg in self.async_redis.listen():
             self.pubsub_callback(msg)
 
-    async def forward_stdout(self):
-        try:
-            b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
-            while len(b) > 0:
-                self.stdout_read_cb(b)
-                b = await self.sprocess.stdout.read_bytes(num_bytes=100, partial=True)
-        except:
-            logger.exception('error while forwarding to stdout')
+    def forward_stdout(self, buf):
+        self.stdout_read_cb(buf)
 
-    async def forward_stderr(self):
-        try:
-            b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
-            while len(b) > 0:
-                self.stderr_read_cb(b)
-                b = await self.sprocess.stderr.read_bytes(num_bytes=100, partial=True)
-        except:
-            logger.exception('error while forwarding to stderr')
+    def forward_stderr(self, buf):
+        self.stderr_read_cb(buf)
 
 
-
-def run_process():
+async def run_process():
     process = Process(sys.argv[1:])
-    process.run()
+    await process.run()
+
+
+def main():
+    asyncio.run(run_process())
 
 
 if __name__ == "__main__":
-    run_process()
+    main()
+
