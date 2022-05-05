@@ -44,7 +44,7 @@ class TestStringMethods(unittest.TestCase):
             cnt += 1
         raise Exception(f"Couldn't complete {fn} in a timely fashion")
 
-    def _test_single_instance(self):
+    def test_single_instance(self):
         """
         only one instance of the child should be running
         """

@@ -5,12 +5,8 @@ import sys
 import time
 import socket
 import redis
-from redis.sentinel import Sentinel
 import logging
 import signal
-import tornado.ioloop
-import tornado.process
-import subprocess
 import aioredis
 import asyncio
 
