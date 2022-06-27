@@ -324,7 +324,7 @@ class Process(object):
 
     async def _read_stream(self, stream, cb):
         while True:
-            line = await stream.read(100)
+            line = await stream.read(-1)
             if line:
                 cb(line)
             else:
