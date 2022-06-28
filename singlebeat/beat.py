@@ -194,10 +194,10 @@ class Process(object):
             self.state = State.WAITING
 
     def stdout_read_cb(self, data):
-        sys.stdout.write(data.decode())
+        sys.stdout.write(data)
 
     def stderr_read_cb(self, data):
-        sys.stderr.write(data.decode())
+        sys.stderr.write(data)
 
     async def timer_cb_paused(self):
         pass
