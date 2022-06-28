@@ -324,8 +324,7 @@ class Process(object):
             await asyncio.sleep(config.HEARTBEAT_INTERVAL)
 
     async def _read_stream(self, stream, cb):
-        Utf8Decoder = codecs.getincrementaldecoder('utf-8')
-        decoder = Utf8Decoder(error='strict')
+        decoder = codecs.getincrementaldecoder('utf-8')(errors='strict')
 
         while True:
             line = await stream.read(100)
