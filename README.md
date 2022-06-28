@@ -293,5 +293,5 @@ Credits
  * [joekohlsdorf](https://github.com/joekohlsdorf)
  * [robvdl](https://github.com/robvdl)
  * [neuroforge](https://github.com/neuroforgede/single-beat)
-
+ * [chripede](https://github.com/chripede/)
  

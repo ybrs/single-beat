@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name='single-beat',
-    version='0.6.0',
+    version='0.6.1',
     long_description=long_description,
     long_description_content_type="text/markdown",
     description='ensures only one instance of your process across your servers',
