@@ -1,3 +1,4 @@
+import codecs
 import functools
 import json
 import os
@@ -193,10 +194,10 @@ class Process(object):
             self.state = State.WAITING
 
     def stdout_read_cb(self, data):
-        sys.stdout.write(data.decode())
+        sys.stdout.write(data)
 
     def stderr_read_cb(self, data):
-        sys.stderr.write(data.decode())
+        sys.stderr.write(data)
 
     async def timer_cb_paused(self):
         pass
@@ -323,10 +324,12 @@ class Process(object):
             await asyncio.sleep(config.HEARTBEAT_INTERVAL)
 
     async def _read_stream(self, stream, cb):
+        decoder = codecs.getincrementaldecoder('utf-8')(errors='strict')
+
         while True:
             line = await stream.read(100)
             if line:
-                cb(line)
+                cb(decoder.decode(line))
             else:
                 break
 
