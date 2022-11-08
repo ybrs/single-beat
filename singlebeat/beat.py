@@ -8,8 +8,8 @@ import socket
 import redis
 import logging
 import signal
-import aioredis
 import asyncio
+from redis import asyncio as aioredis
 
 
 def noop(i):
@@ -355,8 +355,8 @@ class Process(object):
         try:
             await asyncio.wait(
                 [
-                    self._read_stream(self.sprocess.stdout, self.forward_stdout),
-                    self._read_stream(self.sprocess.stderr, self.forward_stderr),
+                    asyncio.create_task(self._read_stream(self.sprocess.stdout, self.forward_stdout)),
+                    asyncio.create_task(self._read_stream(self.sprocess.stderr, self.forward_stderr)),
                 ]
             )
             self.child_exit_cb(self.sprocess.returncode)
