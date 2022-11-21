@@ -6,6 +6,7 @@ import sys
 import time
 import socket
 import redis
+import redis.sentinel
 import logging
 import signal
 import aioredis
