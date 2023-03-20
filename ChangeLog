@@ -1,3 +1,7 @@
+Version 0.6.2
+==============
+ - Fixes asyncio/python 3.11 issues. 
+
 Version 0.6.1
 ==============
  - Fixes unicode decode errors - if split multibyte char at 100th character. see https://github.com/ybrs/single-beat/pull/48
