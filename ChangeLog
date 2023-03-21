@@ -1,3 +1,7 @@
+Version 0.6.3
+==============
+ - Release issue, re-releasing 0.6.2
+
 Version 0.6.2
 ==============
  - Fixes asyncio/python 3.11 issues. 
