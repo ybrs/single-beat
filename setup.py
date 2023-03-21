@@ -15,8 +15,7 @@ setup(
     zip_safe=True,
     python_requires='>3.7.0',
     install_requires=[
-        'redis >= 2.9.1',
-        'aioredis >= 2.0',
+        'redis>=4.2.0',
         'Click>=7.0'
     ],
     test_require=[
