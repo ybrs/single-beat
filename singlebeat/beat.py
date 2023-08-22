@@ -1,4 +1,5 @@
 import codecs
+from enum import Enum
 import functools
 import json
 import os
@@ -131,7 +132,7 @@ def get_process_identifier(args):
     return "_".join(args)
 
 
-class State:
+class State(Enum):
     PAUSED = "PAUSED"
     RUNNING = "RUNNING"
     WAITING = "WAITING"
@@ -147,9 +148,10 @@ def is_process_alive(pid):
 
 
 class Process(object):
+    state: State = State.WAITING
+
     def __init__(self, args):
         self.args = args
-        self.state = None
         self.t1 = time.time()
 
         self.identifier = config.IDENTIFIER or get_process_identifier(self.args[1:])
@@ -165,7 +167,6 @@ class Process(object):
         self.fence_token = 0
         self.sprocess = None
         self.pc = None
-        self.state = State.WAITING
         self._periodic_callback_running = True
         self.child_exit_cb = self.proc_exit_cb
 
@@ -277,9 +278,9 @@ class Process(object):
         await self.timer_cb_running()
 
     async def timer_cb(self):
-        logger.debug("timer called %s state=%s", time.time() - self.t1, self.state)
+        logger.debug("timer called %s state=%s", time.time() - self.t1, self.state.value)
         self.t1 = time.time()
-        fn = getattr(self, "timer_cb_{}".format(self.state.lower()))
+        fn = getattr(self, "timer_cb_{}".format(self.state.value.lower()))
         await fn()
 
     def acquire_lock(self):
@@ -305,12 +306,12 @@ class Process(object):
         :param ioloop:
         :return:
         """
-        assert self.state in ("WAITING", "RUNNING", "PAUSED")
-        logger.debug("our state %s", self.state)
-        if self.state == "WAITING":
+        assert self.state in (State.WAITING, State.RUNNING, State.PAUSED)
+        logger.debug("our state %s", self.state.value)
+        if self.state == State.WAITING:
             self._periodic_callback_running = False
 
-        if self.state == "RUNNING":
+        if self.state == State.RUNNING:
             logger.debug(
                 "already running sending signal to child - %s", self.sprocess.pid
             )
@@ -475,7 +476,7 @@ class Process(object):
             json.dumps(
                 {
                     "identifier": config.get_host_identifier(),
-                    "state": self.state,
+                    "state": self.state.value,
                     "info": info or "",
                 }
             ),
