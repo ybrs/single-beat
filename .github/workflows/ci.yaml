@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  - push
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:latest
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          cd test
+          ./test-single-beat.sh
