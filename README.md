@@ -172,6 +172,40 @@ SINGLE_BEAT_REDIS_SERVER='redis://redis-host:6379/1' single-beat celery beat
 
     it will try to spawn celerybeat every 60 seconds.
 
+- SINGLE_BEAT_REDIS_SENTINEL_SSL (default False)
+
+    enable SSL mode for Sentinel nodes in Sentinel configuration
+
+- SINGLE_BEAT_REDIS_SENTINEL_SSL_CA_CERTS
+    
+    (optional) CA certificate (single PEM file) for SSL validation for Sentinel nodes
+
+- SINGLE_BEAT_REDIS_SENTINEL_SSL_CERT_REQS (default "required" if SSL True)
+
+    SSL certificate validation mode for Sentinel nodes.
+    
+    The options are:
+    - "none": doesn't require a certificate from the server for authentication.
+    - "optional": can accept a certificate from the server, but it doesn't require one.
+    - "required": must receive and validate a certificate from the server
+
+- SINGLE_BEAT_REDIS_SSL (default False)
+
+    enable SSL mode for Redis nodes in Sentinel configuration
+
+- SINGLE_BEAT_REDIS_SSL_CA_CERTS
+
+    (optional) CA certificate (single PEM file) for SSL validation for Redis nodes in Sentinel configuration
+
+- SINGLE_BEAT_REDIS_SSL_CERT_REQS (default "required" if SSL True)
+
+    SSL certificate validation mode for Redis nodes in Sentinel configuration.
+    
+    The options are:
+    - "none": doesn't require a certificate from the server for authentication.
+    - "optional": can accept a certificate from the server, but it doesn't require one.
+    - "required": must receive and validate a certificate from the server
+
 Cli
 -------------
 Single-beat also has a simple cli, that gives info about where your process is living - also can pause single-beat, restart your process etc.

@@ -22,21 +22,29 @@ def env(identifier, default, type=noop):
 
 
 class Config(object):
-    REDIS_SERVER = env('REDIS_SERVER', 'redis://localhost:6379')
-    REDIS_PASSWORD = env('REDIS_PASSWORD', None)
-    REDIS_SENTINEL = env('REDIS_SENTINEL', None)
-    REDIS_SENTINEL_MASTER = env('REDIS_SENTINEL_MASTER', 'mymaster')
-    REDIS_SENTINEL_DB = env('REDIS_SENTINEL_DB', 0)
-    REDIS_SENTINEL_PASSWORD = env('REDIS_SENTINEL_PASSWORD', None)
-    IDENTIFIER = env('IDENTIFIER', None)
-    LOCK_TIME = env('LOCK_TIME', 5, int)
-    INITIAL_LOCK_TIME = env('INITIAL_LOCK_TIME', LOCK_TIME * 2, int)
-    HEARTBEAT_INTERVAL = env('HEARTBEAT_INTERVAL', 1, int)
-    HOST_IDENTIFIER = env('HOST_IDENTIFIER', socket.gethostname())
-    LOG_LEVEL = env('LOG_LEVEL', 'warn')
+    REDIS_SERVER = env("REDIS_SERVER", "redis://localhost:6379")
+    REDIS_PASSWORD = env("REDIS_PASSWORD", None)
+    REDIS_SENTINEL = env("REDIS_SENTINEL", None)
+    REDIS_SENTINEL_MASTER = env("REDIS_SENTINEL_MASTER", "mymaster")
+    REDIS_SENTINEL_DB = env("REDIS_SENTINEL_DB", 0)
+    REDIS_SENTINEL_PASSWORD = env("REDIS_SENTINEL_PASSWORD", None)
+    IDENTIFIER = env("IDENTIFIER", None)
+    LOCK_TIME = env("LOCK_TIME", 5, int)
+    INITIAL_LOCK_TIME = env("INITIAL_LOCK_TIME", LOCK_TIME * 2, int)
+    HEARTBEAT_INTERVAL = env("HEARTBEAT_INTERVAL", 1, int)
+    HOST_IDENTIFIER = env("HOST_IDENTIFIER", socket.gethostname())
+    LOG_LEVEL = env("LOG_LEVEL", "warn")
     # wait_mode can be, supervisord or heartbeat
     WAIT_MODE = env("WAIT_MODE", "heartbeat")
     WAIT_BEFORE_DIE = env("WAIT_BEFORE_DIE", 60, int)
+    # SSL config
+    REDIS_SSL = env("REDIS_SSL", False, bool)
+    REDIS_SSL_CA_CERTS = env("REDIS_SSL_CA_CERTS", None)
+    REDIS_SSL_CERT_REQS = env("REDIS_SSL_CERT_REQS", None)
+    REDIS_SENTINEL_SSL = env("REDIS_SENTINEL_SSL", False, bool)
+    REDIS_SENTINEL_SSL_CA_CERTS = env("REDIS_SENTINEL_SSL_CA_CERTS", None)
+    REDIS_SENTINEL_SSL_CERT_REQS = env("REDIS_SENTINEL_SSL_CERT_REQS", None)
+
     _host_identifier = None
 
     def check(self, cond, message):
@@ -60,9 +68,17 @@ class Config(object):
 
     def get_redis(self):
         if self.REDIS_SENTINEL:
-            return self._sentinel.master_for(self.REDIS_SENTINEL_MASTER,
-                                             password=self.REDIS_PASSWORD,
-                                             redis_class=redis.Redis)
+            redis_kwargs = {}
+            if self.REDIS_SSL:
+                redis_kwargs["ssl"] = True
+                redis_kwargs["ssl_ca_certs"] = self.REDIS_SSL_CA_CERTS or None
+                redis_kwargs["ssl_cert_reqs"] = self.REDIS_SSL_CERT_REQS or "required"
+            return self._sentinel.master_for(
+                self.REDIS_SENTINEL_MASTER,
+                password=self.REDIS_PASSWORD,
+                redis_class=redis.Redis,
+                **redis_kwargs,
+            )
         return self._redis
 
     def rewrite_redis_url(self):
@@ -82,12 +98,22 @@ class Config(object):
 
     def __init__(self):
         if self.REDIS_SENTINEL:
-            sentinels = [tuple(s.split(':')) for s in self.REDIS_SENTINEL.split(';')]
-            self._sentinel = redis.sentinel.Sentinel(sentinels,
-                                                     db=self.REDIS_SENTINEL_DB,
-                                                     socket_timeout=0.1,
-                                                     sentinel_kwargs={"password": self.REDIS_SENTINEL_PASSWORD}
-                                                     )
+            sentinels = [tuple(s.split(":")) for s in self.REDIS_SENTINEL.split(";")]
+            sentinel_kwargs = {
+                "password": self.REDIS_SENTINEL_PASSWORD,
+            }
+            if self.REDIS_SENTINEL_SSL:
+                sentinel_kwargs["ssl"] = True
+                sentinel_kwargs["ssl_ca_certs"] = self.REDIS_SENTINEL_SSL_CA_CERTS or None
+                sentinel_kwargs["ssl_cert_reqs"] = (
+                    self.REDIS_SENTINEL_SSL_CERT_REQS or "required"
+                )
+            self._sentinel = redis.sentinel.Sentinel(
+                sentinels,
+                db=self.REDIS_SENTINEL_DB,
+                socket_timeout=0.1,
+                sentinel_kwargs=sentinel_kwargs,
+            )
         else:
             self._redis = redis.Redis.from_url(self.rewrite_redis_url())
 
@@ -107,9 +133,7 @@ class Config(object):
         if self._host_identifier:
             return self._host_identifier
         local_ip_addr = (
-            self.get_redis()
-            .connection_pool.get_connection("ping")
-            ._sock.getsockname()[0]
+            self.get_redis().connection_pool.get_connection("ping")._sock.getsockname()[0]
         )
         self._host_identifier = "{}:{}".format(local_ip_addr, os.getpid())
         return self._host_identifier
@@ -209,9 +233,7 @@ class Process(object):
             return self.ioloop.create_task(self.spawn_process())
         # couldn't acquire lock
         if config.WAIT_MODE == "supervised":
-            logger.debug(
-                "already running, will exit after %s seconds" % config.WAIT_BEFORE_DIE
-            )
+            logger.debug("already running, will exit after %s seconds" % config.WAIT_BEFORE_DIE)
             time.sleep(config.WAIT_BEFORE_DIE)
             sys.exit()
 
@@ -257,7 +279,9 @@ class Process(object):
             rds.set(
                 "SINGLE_BEAT_{identifier}".format(identifier=self.identifier),
                 "{}:{}:{}".format(
-                    self.fence_token, config.HOST_IDENTIFIER, self.process_pid()
+                    self.fence_token,
+                    config.HOST_IDENTIFIER,
+                    self.process_pid(),
                 ),
                 ex=config.LOCK_TIME,
             )
@@ -312,7 +336,8 @@ class Process(object):
 
         if self.state == "RUNNING":
             logger.debug(
-                "already running sending signal to child - %s", self.sprocess.pid
+                "already running sending signal to child - %s",
+                self.sprocess.pid,
             )
             self.sprocess.send_signal(signum)
             logger.debug("waiting for subprocess to finish")
@@ -325,7 +350,7 @@ class Process(object):
             await asyncio.sleep(config.HEARTBEAT_INTERVAL)
 
     async def _read_stream(self, stream, cb):
-        decoder = codecs.getincrementaldecoder('utf-8')(errors='strict')
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
 
         while True:
             line = await stream.read(100)
@@ -344,7 +369,7 @@ class Process(object):
                 *cmd,
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError:
             """
@@ -356,8 +381,12 @@ class Process(object):
         try:
             await asyncio.wait(
                 [
-                    asyncio.create_task(self._read_stream(self.sprocess.stdout, self.forward_stdout)),
-                    asyncio.create_task(self._read_stream(self.sprocess.stderr, self.forward_stderr)),
+                    asyncio.create_task(
+                        self._read_stream(self.sprocess.stdout, self.forward_stdout)
+                    ),
+                    asyncio.create_task(
+                        self._read_stream(self.sprocess.stderr, self.forward_stderr)
+                    ),
                 ]
             )
             self.child_exit_cb(self.sprocess.returncode)
@@ -506,4 +535,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
