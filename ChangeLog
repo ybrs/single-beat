@@ -1,3 +1,7 @@
+Version 0.6.4
+==============
+ - Maintenance dependency upgrade, require Python >=3.10, redis>=8.1.0, Click>=8.5.0
+
 Version 0.6.3
 ==============
  - Release issue, re-releasing 0.6.2
