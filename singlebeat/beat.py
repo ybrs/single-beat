@@ -168,6 +168,7 @@ class Process(object):
         self.state = State.WAITING
         self._periodic_callback_running = True
         self.child_exit_cb = self.proc_exit_cb
+        self.ioloop.create_task(self.wait_for_commands())
 
     def proc_exit_cb(self, exit_status):
         """When child exits we use the same exit status code"""
@@ -452,7 +453,11 @@ class Process(object):
     def pubsub_callback(self, msg):
         logger.info("got command - %s", msg)
 
-        if msg["type"] != b"message":
+        msg_type = msg["type"]
+        if isinstance(msg_type, bytes):
+            msg_type = msg_type.decode('utf-8')
+
+        if msg_type != "message":
             return
 
         try:
