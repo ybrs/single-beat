@@ -5,11 +5,16 @@ import psutil
 import os
 
 import signal
+import shlex
+from pathlib import Path
 
 
 class TestStringMethods(unittest.TestCase):
     def setup_processes(self, cmd="single-beat python echo.py", cnt=3):
-        self.processes = [subprocess.Popen(cmd, shell=True) for i in range(0, cnt)]
+        self.processes = [
+            subprocess.Popen(shlex.split(cmd), cwd=Path(__file__).parent)
+            for _ in range(cnt)
+        ]
 
     def get_all_children(self):
         children = []
@@ -50,9 +55,13 @@ class TestStringMethods(unittest.TestCase):
         self.assertEqual(len(children), 1, "we have more than one child")
         # send kill to the child, see if someone else spawns
         os.kill(children[0].pid, signal.SIGTERM)
-        new_children = self.wait_and_try_again(self.get_all_children, 30)
-        self.assertGreater(len(children), 0, "couldn't spawn new child in 30 seconds")
-        self.assertEqual(len(children), 1, "we have more than one child")
+        def replacement_children():
+            active = self.get_all_children()
+            return active if active and all(p.pid != children[0].pid for p in active) else None
+
+        new_children = self.wait_and_try_again(replacement_children, 30)
+        self.assertGreater(len(new_children), 0, "couldn't spawn new child in 30 seconds")
+        self.assertEqual(len(new_children), 1, "we have more than one child")
         self.assertNotEqual(
             children[0].pid,
             new_children[0].pid,

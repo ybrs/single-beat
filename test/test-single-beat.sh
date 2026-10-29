@@ -1,13 +1,15 @@
 #!/bin/bash
-(SINGLE_BEAT_REDIS_SERVER='redis://localhost:6379/9' SINGLE_BEAT_LOG_LEVEL=debug SINGLE_BEAT_IDENTIFIER='test-beat' single-beat python long_waiting_process.py > first_single_beat.log) &
+# Make forwarded output visible in log files before processes terminate.
+export PYTHONUNBUFFERED=1
+(SINGLE_BEAT_REDIS_SERVER="${SINGLE_BEAT_REDIS_SERVER:-redis://localhost:6379/9}" SINGLE_BEAT_LOG_LEVEL=debug SINGLE_BEAT_IDENTIFIER='test-beat' single-beat python long_waiting_process.py > first_single_beat.log) &
 first_pid=$!
 echo $first_pid
 
-(SINGLE_BEAT_REDIS_SERVER='redis://localhost:6379/9' SINGLE_BEAT_LOG_LEVEL=debug SINGLE_BEAT_IDENTIFIER='test-beat' single-beat python long_waiting_process.py > second_single_beat.log) &
+(SINGLE_BEAT_REDIS_SERVER="${SINGLE_BEAT_REDIS_SERVER:-redis://localhost:6379/9}" SINGLE_BEAT_LOG_LEVEL=debug SINGLE_BEAT_IDENTIFIER='test-beat' single-beat python long_waiting_process.py > second_single_beat.log) &
 second_pid=$!
 echo $second_pid
 
-(SINGLE_BEAT_REDIS_SERVER='redis://localhost:6379/9' SINGLE_BEAT_LOG_LEVEL=debug SINGLE_BEAT_IDENTIFIER='test-beat' single-beat python long_waiting_process.py > third_single_beat.log) &
+(SINGLE_BEAT_REDIS_SERVER="${SINGLE_BEAT_REDIS_SERVER:-redis://localhost:6379/9}" SINGLE_BEAT_LOG_LEVEL=debug SINGLE_BEAT_IDENTIFIER='test-beat' single-beat python long_waiting_process.py > third_single_beat.log) &
 third_pid=$!
 echo $third_pid
 

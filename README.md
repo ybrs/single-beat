@@ -38,6 +38,21 @@ Installation
 sudo pip install single-beat
 ```
 
+Development and tests
+---------------------
+
+Python 3.10 or newer and a running Redis server are required.
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[test]'
+python -m unittest discover -s test -v
+(cd test && bash test-single-beat.sh)
+```
+
+Set `SINGLE_BEAT_REDIS_SERVER` to use a dedicated test Redis server or database.
+
 Configuration
 -------------
 

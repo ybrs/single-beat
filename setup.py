@@ -13,14 +13,14 @@ setup(
     license='MIT',
     packages=['singlebeat'],
     zip_safe=True,
-    python_requires='>3.7.0',
+    python_requires='>=3.10',
     install_requires=[
-        'redis>=4.2.0',
-        'Click>=7.0'
+        'redis>=8.1.0',
+        'Click>=8.5.0'
     ],
-    test_require=[
-        'psutil>=5.2.2'
-    ],
+    extras_require={
+        'test': ['psutil>=7.2.2'],
+    },
     entry_points={
         'console_scripts': [
             'single-beat = singlebeat.beat:main',
