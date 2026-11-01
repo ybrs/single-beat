@@ -309,4 +309,15 @@ Credits
  * [robvdl](https://github.com/robvdl)
  * [neuroforge](https://github.com/neuroforgede/single-beat)
  * [chripede](https://github.com/chripede/)
- 
+
+
+### Running CLI integration tests
+
+Run the CLI integration tests against a real Redis instance with Docker Compose:
+
+```sh
+docker compose -f compose.test.yaml up --build --abort-on-container-exit --exit-code-from tests
+docker compose -f compose.test.yaml down
+```
+
+The tests start isolated single-beat processes and exercise the CLI commands.

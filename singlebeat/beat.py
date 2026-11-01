@@ -11,6 +11,7 @@ import logging
 import signal
 import asyncio
 from redis import asyncio as aioredis
+from redis.asyncio.sentinel import Sentinel as AsyncSentinel
 
 
 def noop(i):
@@ -92,10 +93,16 @@ class Config(object):
             self._redis = redis.Redis.from_url(self.rewrite_redis_url())
 
     def get_async_redis_client(self):
-        conn = self.get_redis().connection_pool.get_connection("ping")
-        host, port, password = conn.host, conn.port, conn.password
-        r = aioredis.Redis(host=host, port=port, password=password)
-        return r.pubsub()
+        if self.REDIS_SENTINEL:
+            sentinels = [(host, int(port)) for host, port in
+                         (s.split(":") for s in self.REDIS_SENTINEL.split(";"))]
+            client = AsyncSentinel(
+                sentinels, db=self.REDIS_SENTINEL_DB, socket_timeout=0.1,
+                sentinel_kwargs={"password": self.REDIS_SENTINEL_PASSWORD},
+            ).master_for(self.REDIS_SENTINEL_MASTER, password=self.REDIS_PASSWORD)
+        else:
+            client = aioredis.Redis.from_url(self.rewrite_redis_url())
+        return client.pubsub()
 
     def get_host_identifier(self):
         """\
@@ -182,15 +189,18 @@ class Process(object):
         :param exit_status:
         :return:
         """
+        self.child_exit_cb = self.proc_exit_cb
 
     def proc_exit_cb_restart(self, exit_status):
         """\
         this is used when we restart the process,
         it re-triggers the start
         """
-        self.ioloop.run_until_complete(self.spawn_process())
+        self.child_exit_cb = self.proc_exit_cb
+        self.ioloop.create_task(self.spawn_process())
 
     def proc_exit_cb_state_set(self, exit_status):
+        self.child_exit_cb = self.proc_exit_cb
         if self.state == State.PAUSED:
             self.state = State.WAITING
 
@@ -204,6 +214,8 @@ class Process(object):
         pass
 
     async def timer_cb_waiting(self):
+        if self.sprocess and self.sprocess.returncode is None:
+            return
         if self.acquire_lock():
             logger.info(f"acquired lock, {self.identifier} spawning child process")
             return self.ioloop.create_task(self.spawn_process())
@@ -305,12 +317,13 @@ class Process(object):
         :param ioloop:
         :return:
         """
-        assert self.state in ("WAITING", "RUNNING", "PAUSED")
+        assert self.state in ("WAITING", "RUNNING", "PAUSED", "RESTARTING")
         logger.debug("our state %s", self.state)
         if self.state == "WAITING":
             self._periodic_callback_running = False
 
-        if self.state == "RUNNING":
+        if self.state in ("RUNNING", "RESTARTING") and self.child_process_alive():
+            self.child_exit_cb = self.proc_exit_cb_noop
             logger.debug(
                 "already running sending signal to child - %s", self.sprocess.pid
             )
@@ -320,9 +333,15 @@ class Process(object):
         self._periodic_callback_running = False
 
     async def run(self):
-        while self._periodic_callback_running:
-            await self.timer_cb()
-            await asyncio.sleep(config.HEARTBEAT_INTERVAL)
+        listener = self.ioloop.create_task(self.wait_for_commands())
+        try:
+            while self._periodic_callback_running:
+                await self.timer_cb()
+                await asyncio.sleep(config.HEARTBEAT_INTERVAL)
+        finally:
+            listener.cancel()
+            await asyncio.gather(listener, return_exceptions=True)
+            await self.async_redis.aclose()
 
     async def _read_stream(self, stream, cb):
         decoder = codecs.getincrementaldecoder('utf-8')(errors='strict')
@@ -372,16 +391,16 @@ class Process(object):
         return info
 
     def child_process_alive(self):
-        return not self.sprocess.protocol._process_exited
+        return self.sprocess is not None and self.sprocess.returncode is None
 
     def cli_command_quit(self, msg):
         """\
         kills the child and exits
         """
-        if self.state == State.RUNNING and self.sprocess and self.child_process_alive():
+        self._periodic_callback_running = False
+        self.child_exit_cb = self.proc_exit_cb_noop
+        if self.child_process_alive():
             self.sprocess.kill()
-        else:
-            sys.exit(0)
 
     def cli_command_pause(self, msg):
         """\
@@ -420,10 +439,9 @@ class Process(object):
         :return:
         """
         info = ""
-        if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
+        if self.state == State.RUNNING and self.child_process_alive():
             self.state = State.PAUSED
-            # TODO:
-            # self.sprocess.set_exit_callback(self.proc_exit_cb_state_set)
+            self.child_exit_cb = self.proc_exit_cb_state_set
             self.sprocess.kill()
             info = "killed"
             # TODO: check if process is really dead etc.
@@ -441,7 +459,7 @@ class Process(object):
         :return:
         """
         info = ""
-        if self.state == State.RUNNING and self.sprocess and self.sprocess.proc:
+        if self.state == State.RUNNING and self.child_process_alive():
             self.state = State.RESTARTING
             self.child_exit_cb = self.proc_exit_cb_restart
             self.sprocess.kill()
@@ -452,7 +470,7 @@ class Process(object):
     def pubsub_callback(self, msg):
         logger.info("got command - %s", msg)
 
-        if msg["type"] != b"message":
+        if msg["type"] not in ("message", b"message"):
             return
 
         try:
@@ -486,7 +504,10 @@ class Process(object):
         await self.async_redis.subscribe("SB_{}".format(self.identifier))
         logger.debug("subscribed to redis channel %s", "SB_{}".format(self.identifier))
         async for msg in self.async_redis.listen():
-            self.pubsub_callback(msg)
+            try:
+                self.pubsub_callback(msg)
+            except Exception:
+                logger.exception("failed to process command %s", msg)
 
     def forward_stdout(self, buf):
         self.stdout_read_cb(buf)
