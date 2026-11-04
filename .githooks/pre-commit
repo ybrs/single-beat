@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+docker compose -f compose.test.yaml up --build --abort-on-container-exit --exit-code-from tests
